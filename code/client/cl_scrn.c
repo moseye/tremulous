@@ -324,33 +324,13 @@ int	SCR_GetBigStringWidth( const char *str ) {
 
 //===============================================================================
 
-/*
-=================
-SCR_DrawDemoRecording
-=================
-*/
-void SCR_DrawDemoRecording( void ) {
-	char	string[1024];
-	int		pos;
-
-	if ( !clc.demorecording ) {
-		return;
-	}
-	if ( clc.spDemoRecording ) {
-		return;
-	}
-
-	pos = FS_FTell( clc.demofile );
-	sprintf( string, "RECORDING %s: %ik", clc.demoName, pos / 1024 );
-
-	SCR_DrawStringExt( 320 - strlen( string ) * 4, 20, 8, string, g_color_table[7], qtrue, qfalse );
-}
-
 
 #ifdef USE_VOIP
 /*
 =================
 SCR_DrawVoipMeter
+
+FIXME: inherited from ioq3, move to cgame/ui
 =================
 */
 void SCR_DrawVoipMeter( void ) {
@@ -516,17 +496,10 @@ void SCR_DrawScreenField( stereoFrame_t stereoFrame ) {
 		case CA_PRIMED:
 			// draw the game information screen and loading progress
 			CL_CGameRendering(stereoFrame);
-
-			// also draw the connection information, so it doesn't
-			// flash away too briefly on local or lan games
-			// refresh to update the time
-			VM_Call( uivm, UI_REFRESH, cls.realtime );
-			VM_Call( uivm, UI_DRAW_CONNECT_SCREEN, qtrue );
 			break;
 		case CA_ACTIVE:
 			// always supply STEREO_CENTER as vieworg offset is now done by the engine.
 			CL_CGameRendering(stereoFrame);
-			SCR_DrawDemoRecording();
 #ifdef USE_VOIP
 			SCR_DrawVoipMeter();
 #endif

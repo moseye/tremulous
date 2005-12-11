@@ -29,7 +29,7 @@ int g_console_field_width = 78;
 
 #define	NUM_CON_TIMES 4
 
-#define		CON_TEXTSIZE	32768
+#define		CON_TEXTSIZE	163840
 typedef struct {
 	qboolean	initialized;
 
@@ -48,8 +48,6 @@ typedef struct {
 
 	int		vislines;		// in scanlines
 
-	int		times[NUM_CON_TIMES];	// cls.realtime time the line was generated
-								// for transparent notify lines
 	vec4_t	color;
 } console_t;
 
@@ -57,7 +55,6 @@ console_t	con;
 
 cvar_t		*con_conspeed;
 cvar_t		*con_autoclear;
-cvar_t		*con_notifytime;
 
 #define	DEFAULT_CONSOLE_WIDTH	78
 
@@ -79,7 +76,6 @@ void Con_ToggleConsole_f (void) {
 
 	g_consoleField.widthInChars = g_console_field_width;
 
-	Con_ClearNotify ();
 	Key_SetCatcher( Key_GetCatcher( ) ^ KEYCATCH_CONSOLE );
 }
 
@@ -91,67 +87,6 @@ Con_ToggleMenu_f
 void Con_ToggleMenu_f( void ) {
 	CL_KeyEvent( K_ESCAPE, qtrue, Sys_Milliseconds() );
 	CL_KeyEvent( K_ESCAPE, qfalse, Sys_Milliseconds() );
-}
-
-/*
-================
-Con_MessageMode_f
-================
-*/
-void Con_MessageMode_f (void) {
-	chat_playerNum = -1;
-	chat_team = qfalse;
-	Field_Clear( &chatField );
-	chatField.widthInChars = 30;
-
-	Key_SetCatcher( Key_GetCatcher( ) ^ KEYCATCH_MESSAGE );
-}
-
-/*
-================
-Con_MessageMode2_f
-================
-*/
-void Con_MessageMode2_f (void) {
-	chat_playerNum = -1;
-	chat_team = qtrue;
-	Field_Clear( &chatField );
-	chatField.widthInChars = 25;
-	Key_SetCatcher( Key_GetCatcher( ) ^ KEYCATCH_MESSAGE );
-}
-
-/*
-================
-Con_MessageMode3_f
-================
-*/
-void Con_MessageMode3_f (void) {
-	chat_playerNum = VM_Call( cgvm, CG_CROSSHAIR_PLAYER );
-	if ( chat_playerNum < 0 || chat_playerNum >= MAX_CLIENTS ) {
-		chat_playerNum = -1;
-		return;
-	}
-	chat_team = qfalse;
-	Field_Clear( &chatField );
-	chatField.widthInChars = 30;
-	Key_SetCatcher( Key_GetCatcher( ) ^ KEYCATCH_MESSAGE );
-}
-
-/*
-================
-Con_MessageMode4_f
-================
-*/
-void Con_MessageMode4_f (void) {
-	chat_playerNum = VM_Call( cgvm, CG_LAST_ATTACKER );
-	if ( chat_playerNum < 0 || chat_playerNum >= MAX_CLIENTS ) {
-		chat_playerNum = -1;
-		return;
-	}
-	chat_team = qfalse;
-	Field_Clear( &chatField );
-	chatField.widthInChars = 30;
-	Key_SetCatcher( Key_GetCatcher( ) ^ KEYCATCH_MESSAGE );
 }
 
 /*
@@ -262,11 +197,8 @@ Con_ClearNotify
 ================
 */
 void Con_ClearNotify( void ) {
-	int		i;
-	
-	for ( i = 0 ; i < NUM_CON_TIMES ; i++ ) {
-		con.times[i] = 0;
-	}
+	Cmd_TokenizeString( NULL );
+	CL_GameConsoleText( );
 }
 
 						
@@ -328,8 +260,6 @@ void Con_CheckResize (void)
 							  oldtotallines) * oldwidth + j];
 			}
 		}
-
-		Con_ClearNotify ();
 	}
 
 	con.current = con.totallines - 1;
@@ -356,7 +286,6 @@ Con_Init
 void Con_Init (void) {
 	int		i;
 
-	con_notifytime = Cvar_Get ("con_notifytime", "3", 0);
 	con_conspeed = Cvar_Get ("scr_conspeed", "3", 0);
 	con_autoclear = Cvar_Get("con_autoclear", "1", CVAR_ARCHIVE);
 
@@ -370,10 +299,6 @@ void Con_Init (void) {
 
 	Cmd_AddCommand ("toggleconsole", Con_ToggleConsole_f);
 	Cmd_AddCommand ("togglemenu", Con_ToggleMenu_f);
-	Cmd_AddCommand ("messagemode", Con_MessageMode_f);
-	Cmd_AddCommand ("messagemode2", Con_MessageMode2_f);
-	Cmd_AddCommand ("messagemode3", Con_MessageMode3_f);
-	Cmd_AddCommand ("messagemode4", Con_MessageMode4_f);
 	Cmd_AddCommand ("clear", Con_Clear_f);
 	Cmd_AddCommand ("condump", Con_Dump_f);
 	Cmd_SetCommandCompletionFunc( "condump", Cmd_CompleteTxtName );
@@ -388,10 +313,6 @@ void Con_Shutdown(void)
 {
 	Cmd_RemoveCommand("toggleconsole");
 	Cmd_RemoveCommand("togglemenu");
-	Cmd_RemoveCommand("messagemode");
-	Cmd_RemoveCommand("messagemode2");
-	Cmd_RemoveCommand("messagemode3");
-	Cmd_RemoveCommand("messagemode4");
 	Cmd_RemoveCommand("clear");
 	Cmd_RemoveCommand("condump");
 }
@@ -404,15 +325,6 @@ Con_Linefeed
 void Con_Linefeed (qboolean skipnotify)
 {
 	int		i;
-
-	// mark time for transparent overlay
-	if (con.current >= 0)
-	{
-    if (skipnotify)
-		  con.times[con.current % NUM_CON_TIMES] = 0;
-    else
-		  con.times[con.current % NUM_CON_TIMES] = cls.realtime;
-	}
 
 	con.x = 0;
 	if (con.display == con.current)
@@ -436,7 +348,6 @@ void CL_ConsolePrint( char *txt ) {
 	unsigned char	c;
 	unsigned short	color;
 	qboolean skipnotify = qfalse;		// NERVE - SMF
-	int prev;							// NERVE - SMF
 
 	// TTimo - prefix for text that shows up in console but not in notify
 	// backported from RTCW
@@ -458,6 +369,16 @@ void CL_ConsolePrint( char *txt ) {
 		con.linewidth = -1;
 		Con_CheckResize ();
 		con.initialized = qtrue;
+	}
+
+	if( !skipnotify && !( Key_GetCatcher( ) & KEYCATCH_CONSOLE ) ) {
+		Cmd_SaveCmdContext( );
+
+		// feed the text to cgame
+		Cmd_TokenizeString( txt );
+		CL_GameConsoleText( );
+
+		Cmd_RestoreCmdContext( );
 	}
 
 	color = ColorIndex(COLOR_WHITE);
@@ -502,21 +423,6 @@ void CL_ConsolePrint( char *txt ) {
 			break;
 		}
 	}
-
-
-	// mark time for transparent overlay
-	if (con.current >= 0) {
-		// NERVE - SMF
-		if ( skipnotify ) {
-			prev = con.current % NUM_CON_TIMES - 1;
-			if ( prev < 0 )
-				prev = NUM_CON_TIMES - 1;
-			con.times[prev] = 0;
-		}
-		else
-		// -NERVE - SMF
-			con.times[con.current % NUM_CON_TIMES] = cls.realtime;
-	}
 }
 
 
@@ -551,83 +457,6 @@ void Con_DrawInput (void) {
 
 	Field_Draw( &g_consoleField, con.xadjust + 2 * SMALLCHAR_WIDTH, y,
 		SCREEN_WIDTH - 3 * SMALLCHAR_WIDTH, qtrue, qtrue );
-}
-
-
-/*
-================
-Con_DrawNotify
-
-Draws the last few lines of output transparently over the game top
-================
-*/
-void Con_DrawNotify (void)
-{
-	int		x, v;
-	short	*text;
-	int		i;
-	int		time;
-	int		skip;
-	int		currentColor;
-
-	currentColor = 7;
-	re.SetColor( g_color_table[currentColor] );
-
-	v = 0;
-	for (i= con.current-NUM_CON_TIMES+1 ; i<=con.current ; i++)
-	{
-		if (i < 0)
-			continue;
-		time = con.times[i % NUM_CON_TIMES];
-		if (time == 0)
-			continue;
-		time = cls.realtime - time;
-		if (time > con_notifytime->value*1000)
-			continue;
-		text = con.text + (i % con.totallines)*con.linewidth;
-
-		if (cl.snap.ps.pm_type != PM_INTERMISSION && Key_GetCatcher( ) & (KEYCATCH_UI | KEYCATCH_CGAME) ) {
-			continue;
-		}
-
-		for (x = 0 ; x < con.linewidth ; x++) {
-			if ( ( text[x] & 0xff ) == ' ' ) {
-				continue;
-			}
-			if ( ColorIndexForNumber( text[x]>>8 ) != currentColor ) {
-				currentColor = ColorIndexForNumber( text[x]>>8 );
-				re.SetColor( g_color_table[currentColor] );
-			}
-			SCR_DrawSmallChar( cl_conXOffset->integer + con.xadjust + (x+1)*SMALLCHAR_WIDTH, v, text[x] & 0xff );
-		}
-
-		v += SMALLCHAR_HEIGHT;
-	}
-
-	re.SetColor( NULL );
-
-	if (Key_GetCatcher( ) & (KEYCATCH_UI | KEYCATCH_CGAME) ) {
-		return;
-	}
-
-	// draw the chat line
-	if ( Key_GetCatcher( ) & KEYCATCH_MESSAGE )
-	{
-		if (chat_team)
-		{
-			SCR_DrawBigString (8, v, "say_team:", 1.0f, qfalse );
-			skip = 10;
-		}
-		else
-		{
-			SCR_DrawBigString (8, v, "say:", 1.0f, qfalse );
-			skip = 5;
-		}
-
-		Field_BigDraw( &chatField, skip * BIGCHAR_WIDTH, v,
-			SCREEN_WIDTH - ( skip + 1 ) * BIGCHAR_WIDTH, qtrue, qtrue );
-	}
-
 }
 
 /*
@@ -763,11 +592,6 @@ void Con_DrawConsole( void ) {
 
 	if ( con.displayFrac ) {
 		Con_DrawSolidConsole( con.displayFrac );
-	} else {
-		// draw notify lines
-		if ( clc.state == CA_ACTIVE ) {
-			Con_DrawNotify ();
-		}
 	}
 }
 
@@ -836,7 +660,6 @@ void Con_Close( void ) {
 		return;
 	}
 	Field_Clear( &g_consoleField );
-	Con_ClearNotify ();
 	Key_SetCatcher( Key_GetCatcher( ) & ~KEYCATCH_CONSOLE );
 	con.finalFrac = 0;				// none visible
 	con.displayFrac = 0;

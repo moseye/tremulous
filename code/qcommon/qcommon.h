@@ -450,6 +450,7 @@ void	Cmd_ArgvBuffer( int arg, char *buffer, int bufferLength );
 char	*Cmd_Args (void);
 char	*Cmd_ArgsFrom( int arg );
 void	Cmd_ArgsBuffer( char *buffer, int bufferLength );
+void	Cmd_LiteralArgsBuffer( char *buffer, int bufferLength );
 char	*Cmd_Cmd (void);
 void	Cmd_Args_Sanitize( void );
 // The functions that execute commands get their parameters with these
@@ -465,6 +466,8 @@ void	Cmd_ExecuteString( const char *text );
 // Parses a single line of text into arguments and tries to execute it
 // as if it was typed at the console
 
+void Cmd_SaveCmdContext( void );
+void Cmd_RestoreCmdContext( void );
 
 /*
 ==============================================================

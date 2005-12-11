@@ -346,12 +346,37 @@ typedef struct cmd_function_s
 } cmd_function_t;
 
 
-static	int			cmd_argc;
-static	char		*cmd_argv[MAX_STRING_TOKENS];		// points into cmd_tokenized
-static	char		cmd_tokenized[BIG_INFO_STRING+MAX_STRING_TOKENS];	// will have 0 bytes inserted
-static	char		cmd_cmd[BIG_INFO_STRING]; // the original command we received (no token processing)
+typedef struct cmdContext_s
+{
+	int		argc;
+	char	*argv[ MAX_STRING_TOKENS ];	// points into cmd.tokenized
+	char	tokenized[ BIG_INFO_STRING + MAX_STRING_TOKENS ];	// will have 0 bytes inserted
+	char	cmd[ BIG_INFO_STRING ]; // the original command we received (no token processing)
+} cmdContext_t;
 
+static cmdContext_t		currentCmd;
+static cmdContext_t		savedCmd;
 static	cmd_function_t	*cmd_functions;		// possible commands to execute
+
+/*
+============
+Cmd_SaveCmdContext
+============
+*/
+void Cmd_SaveCmdContext( void )
+{
+	Com_Memcpy( &savedCmd, &currentCmd, sizeof( cmdContext_t ) );
+}
+
+/*
+============
+Cmd_RestoreCmdContext
+============
+*/
+void Cmd_RestoreCmdContext( void )
+{
+	Com_Memcpy( &currentCmd, &savedCmd, sizeof( cmdContext_t ) );
+}
 
 /*
 ============
@@ -359,7 +384,7 @@ Cmd_Argc
 ============
 */
 int		Cmd_Argc( void ) {
-	return cmd_argc;
+	return currentCmd.argc;
 }
 
 /*
@@ -368,10 +393,10 @@ Cmd_Argv
 ============
 */
 char	*Cmd_Argv( int arg ) {
-	if ( (unsigned)arg >= cmd_argc ) {
+	if ( (unsigned)arg >= currentCmd.argc ) {
 		return "";
 	}
-	return cmd_argv[arg];	
+	return currentCmd.argv[arg];
 }
 
 /*
@@ -399,9 +424,9 @@ char	*Cmd_Args( void ) {
 	int		i;
 
 	cmd_args[0] = 0;
-	for ( i = 1 ; i < cmd_argc ; i++ ) {
-		strcat( cmd_args, cmd_argv[i] );
-		if ( i != cmd_argc-1 ) {
+	for ( i = 1 ; i < currentCmd.argc ; i++ ) {
+		strcat( cmd_args, currentCmd.argv[i] );
+		if ( i != currentCmd.argc-1 ) {
 			strcat( cmd_args, " " );
 		}
 	}
@@ -423,9 +448,9 @@ char *Cmd_ArgsFrom( int arg ) {
 	cmd_args[0] = 0;
 	if (arg < 0)
 		arg = 0;
-	for ( i = arg ; i < cmd_argc ; i++ ) {
-		strcat( cmd_args, cmd_argv[i] );
-		if ( i != cmd_argc-1 ) {
+	for ( i = arg ; i < currentCmd.argc ; i++ ) {
+		strcat( cmd_args, currentCmd.argv[i] );
+		if ( i != currentCmd.argc-1 ) {
 			strcat( cmd_args, " " );
 		}
 	}
@@ -447,6 +472,18 @@ void	Cmd_ArgsBuffer( char *buffer, int bufferLength ) {
 
 /*
 ============
+Cmd_LiteralArgsBuffer
+
+The interpreted versions use this because
+they can't have pointers returned to them
+============
+*/
+void	Cmd_LiteralArgsBuffer( char *buffer, int bufferLength ) {
+	Q_strncpyz( buffer, currentCmd.cmd, bufferLength );
+}
+
+/*
+============
 Cmd_Cmd
 
 Retrieve the unmodified command string
@@ -456,7 +493,7 @@ https://zerowing.idsoftware.com/bugzilla/show_bug.cgi?id=543
 */
 char *Cmd_Cmd(void)
 {
-	return cmd_cmd;
+	return currentCmd.cmd;
 }
 
 /*
@@ -470,9 +507,9 @@ void Cmd_Args_Sanitize(void)
 {
 	int i;
 
-	for(i = 1; i < cmd_argc; i++)
+	for(i = 1; i < currentCmd.argc; i++)
 	{
-		char *c = cmd_argv[i];
+		char *c = currentCmd.argv[i];
 		
 		if(strlen(c) > MAX_CVAR_VALUE_STRING - 1)
 			c[MAX_CVAR_VALUE_STRING - 1] = '\0';
@@ -506,19 +543,20 @@ static void Cmd_TokenizeString2( const char *text_in, qboolean ignoreQuotes ) {
 #endif
 
 	// clear previous args
-	cmd_argc = 0;
+	currentCmd.argc = 0;
+	currentCmd.cmd[ 0 ] = '\0';
 
 	if ( !text_in ) {
 		return;
 	}
 	
-	Q_strncpyz( cmd_cmd, text_in, sizeof(cmd_cmd) );
+	Q_strncpyz( currentCmd.cmd, text_in, sizeof(currentCmd.cmd) );
 
 	text = text_in;
-	textOut = cmd_tokenized;
+	textOut = currentCmd.tokenized;
 
 	while ( 1 ) {
-		if ( cmd_argc == MAX_STRING_TOKENS ) {
+		if ( currentCmd.argc == MAX_STRING_TOKENS ) {
 			return;			// this is usually something malicious
 		}
 
@@ -553,8 +591,8 @@ static void Cmd_TokenizeString2( const char *text_in, qboolean ignoreQuotes ) {
 		// handle quoted strings
     // NOTE TTimo this doesn't handle \" escaping
 		if ( !ignoreQuotes && *text == '"' ) {
-			cmd_argv[cmd_argc] = textOut;
-			cmd_argc++;
+			currentCmd.argv[currentCmd.argc] = textOut;
+			currentCmd.argc++;
 			text++;
 			while ( *text && *text != '"' ) {
 				*textOut++ = *text++;
@@ -568,8 +606,8 @@ static void Cmd_TokenizeString2( const char *text_in, qboolean ignoreQuotes ) {
 		}
 
 		// regular token
-		cmd_argv[cmd_argc] = textOut;
-		cmd_argc++;
+		currentCmd.argv[currentCmd.argc] = textOut;
+		currentCmd.argc++;
 
 		// skip until whitespace, quote, or command
 		while ( *text > ' ' ) {
@@ -771,7 +809,7 @@ void	Cmd_ExecuteString( const char *text ) {
 	// check registered command functions	
 	for ( prev = &cmd_functions ; *prev ; prev = &cmd->next ) {
 		cmd = *prev;
-		if ( !Q_stricmp( cmd_argv[0],cmd->name ) ) {
+		if ( !Q_stricmp( currentCmd.argv[0], cmd->name ) ) {
 			// rearrange the links so that the command will be
 			// near the head of the list next time it is used
 			*prev = cmd->next;
