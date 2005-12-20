@@ -1061,6 +1061,15 @@ typedef struct cplane_s {
 	byte	pad[2];
 } cplane_t;
 
+typedef enum {
+	TT_NONE,
+
+	TT_AABB,
+	TT_CAPSULE,
+	TT_BISPHERE,
+
+	TT_NUM_TRACE_TYPES
+} traceType_t;
 
 // a trace is returned when a box is swept through the world
 typedef struct {
@@ -1072,6 +1081,7 @@ typedef struct {
 	int			surfaceFlags;	// surface hit
 	int			contents;	// contents on other side of surface hit
 	int			entityNum;	// entity the contacted sirface is a part of
+	float		lateralFraction; // fraction of collision tangetially to the trace direction
 } trace_t;
 
 // trace->entityNum can also be 0 to (MAX_GENTITIES-1)
