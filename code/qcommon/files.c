@@ -3210,11 +3210,6 @@ void FS_Shutdown( qboolean closemfp ) {
 #endif
 }
 
-#ifndef STANDALONE
-void Com_AppendCDKey( const char *filename );
-void Com_ReadCDKey( const char *filename );
-#endif
-
 /*
 ================
 FS_ReorderPurePaks
@@ -3361,15 +3356,6 @@ static void FS_Startup( const char *gameName )
 	if ( fs_gamedirvar->string[0] && Q_stricmp( fs_gamedirvar->string, gameName ) ) {
 		FS_AddGameDirectories(fs_gamedirvar->string);
 	}
-
-#ifndef STANDALONE
-	if (!com_standalone->integer) {
-		Com_ReadCDKey(BASEGAME);
-		if (fs_gamedirvar->string[0]) {
-			Com_AppendCDKey(fs_gamedirvar->string);
-		}
-	}
-#endif
 
 	// add our commands
 	Cmd_AddCommand ("path", FS_Path_f);
