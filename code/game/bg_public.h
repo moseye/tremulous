@@ -334,6 +334,8 @@ typedef enum
   WPM_SECONDARY,
   WPM_TERTIARY,
 
+  WPM_NOTFIRING,
+
   WPM_NUM_WEAPONMODES
 } weaponMode_t;
 
