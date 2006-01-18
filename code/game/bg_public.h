@@ -1081,6 +1081,7 @@ typedef struct
   char      *icon;
 
   qboolean  purchasable;
+  qboolean  usable;
 
   WUTeam_t  team;
 } upgradeAttributes_t;
@@ -1210,6 +1211,7 @@ int       BG_FindUpgradeNumForName( char *name );
 char      *BG_FindHumanNameForUpgrade( int upgrade );
 char      *BG_FindIconForUpgrade( int upgrade );
 qboolean  BG_FindPurchasableForUpgrade( int upgrade );
+qboolean  BG_FindUsableForUpgrade( int upgrade );
 WUTeam_t  BG_FindTeamForUpgrade( int upgrade );
 
 // content masks
@@ -1279,3 +1281,9 @@ void BG_ParseCSVEquipmentList( const char *string, weapon_t *weapons, int weapon
     upgrade_t *upgrades, int upgradesSize );
 void BG_ParseCSVClassList( const char *string, pClass_t *classes, int classesSize );
 void BG_ParseCSVBuildableList( const char *string, buildable_t *buildables, int buildablesSize );
+void BG_InitAllowedGameElements( void );
+qboolean BG_WeaponIsAllowed( weapon_t weapon );
+qboolean BG_UpgradeIsAllowed( upgrade_t upgrade );
+qboolean BG_ClassIsAllowed( pClass_t class );
+qboolean BG_BuildableIsAllowed( buildable_t buildable );
+qboolean BG_UpgradeClassAvailable( playerState_t *ps );
