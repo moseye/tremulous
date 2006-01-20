@@ -340,6 +340,7 @@ void SV_RemoveOperatorCommands (void);
 
 
 void SV_MasterShutdown (void);
+void SV_MasterGameStat( const char *data );
 int SV_RateMsec(client_t *client);
 
 
