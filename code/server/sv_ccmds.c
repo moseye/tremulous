@@ -209,7 +209,6 @@ static void SV_MapRestart_f( void ) {
 	int			i;
 	client_t	*client;
 	char		*denied;
-	qboolean	isBot;
 	int			delay;
 
 	// make sure we aren't restarting twice in the same frame
@@ -298,17 +297,11 @@ static void SV_MapRestart_f( void ) {
 			continue;
 		}
 
-		if ( client->netchan.remoteAddress.type == NA_BOT ) {
-			isBot = qtrue;
-		} else {
-			isBot = qfalse;
-		}
-
 		// add the map_restart command
 		SV_AddServerCommand( client, "map_restart\n" );
 
 		// connect the client again, without the firstTime flag
-		denied = VM_ExplicitArgPtr( gvm, VM_Call( gvm, GAME_CLIENT_CONNECT, i, qfalse, isBot ) );
+		denied = VM_ExplicitArgPtr( gvm, VM_Call( gvm, GAME_CLIENT_CONNECT, i, qfalse ) );
 		if ( denied ) {
 			// this generally shouldn't happen, because the client
 			// was connected before the level change
@@ -372,18 +365,6 @@ static void SV_Kick_f( void ) {
 				cl->lastPacketTime = svs.time;	// in case there is a funny zombie
 			}
 		}
-		else if ( !Q_stricmp(Cmd_Argv(1), "allbots") ) {
-			for ( i=0, cl=svs.clients ; i < sv_maxclients->integer ; i++,cl++ ) {
-				if ( !cl->state ) {
-					continue;
-				}
-				if( cl->netchan.remoteAddress.type != NA_BOT ) {
-					continue;
-				}
-				SV_DropClient( cl, "was kicked" );
-				cl->lastPacketTime = svs.time;	// in case there is a funny zombie
-			}
-		}
 		return;
 	}
 	if( cl->netchan.remoteAddress.type == NA_LOOPBACK ) {
@@ -395,36 +376,7 @@ static void SV_Kick_f( void ) {
 	cl->lastPacketTime = svs.time;	// in case there is a funny zombie
 }
 
-/*
-==================
-SV_KickBots_f
 
-Kick all bots off of the server
-==================
-*/
-static void SV_KickBots_f( void ) {
-	client_t	*cl;
-	int			i;
-
-	// make sure server is running
-	if( !com_sv_running->integer ) {
-		Com_Printf("Server is not running.\n");
-		return;
-	}
-
-	for( i = 0, cl = svs.clients; i < sv_maxclients->integer; i++, cl++ ) {
-		if( !cl->state ) {
-			continue;
-		}
-
-		if( cl->netchan.remoteAddress.type != NA_BOT ) {
-			continue;
-		}
-
-		SV_DropClient( cl, "was kicked" );
-		cl->lastPacketTime = svs.time; // in case there is a funny zombie
-	}
-}
 /*
 ==================
 SV_KickAll_f
@@ -1508,7 +1460,6 @@ void SV_AddOperatorCommands( void ) {
 		Cmd_AddCommand ("banClient", SV_BanNum_f);
 	}
 #endif
-	Cmd_AddCommand ("kickbots", SV_KickBots_f);
 	Cmd_AddCommand ("kickall", SV_KickAll_f);
 	Cmd_AddCommand ("kicknum", SV_KickNum_f);
 	Cmd_AddCommand ("clientkick", SV_KickNum_f); // Legacy command
@@ -1552,7 +1503,6 @@ void SV_RemoveOperatorCommands( void ) {
 	Cmd_RemoveCommand ("kicknum");
 	Cmd_RemoveCommand ("clientkick");
 	Cmd_RemoveCommand ("kickall");
-	Cmd_RemoveCommand ("kickbots");
 	Cmd_RemoveCommand ("banUser");
 	Cmd_RemoveCommand ("banClient");
 	Cmd_RemoveCommand ("status");

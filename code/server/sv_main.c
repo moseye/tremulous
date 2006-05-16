@@ -118,11 +118,6 @@ static int SV_ReplacePendingServerCommands( client_t *client, const char *cmd ) 
 			sscanf(client->reliableCommands[ index ], "cs %i", &csnum2);
 			if ( csnum1 == csnum2 ) {
 				Q_strncpyz( client->reliableCommands[ index ], cmd, sizeof( client->reliableCommands[ index ] ) );
-				/*
-				if ( client->netchan.remoteAddress.type != NA_BOT ) {
-					Com_Printf( "WARNING: client %i removed double pending config string %i: %s\n", client-svs.clients, csnum1, cmd );
-				}
-				*/
 				return qtrue;
 			}
 		}
@@ -625,7 +620,7 @@ if a user is interested in a server to do a full status
 ================
 */
 void SVC_Info( netadr_t from ) {
-	int		i, count, humans;
+	int		i, count;
 	char	*gamedir;
 	char	infostring[MAX_INFO_STRING];
 
@@ -653,13 +648,10 @@ void SVC_Info( netadr_t from ) {
 		return;
 
 	// don't count privateclients
-	count = humans = 0;
+	count = 0;
 	for ( i = sv_privateClients->integer ; i < sv_maxclients->integer ; i++ ) {
 		if ( svs.clients[i].state >= CS_CONNECTED ) {
 			count++;
-			if (svs.clients[i].netchan.remoteAddress.type != NA_BOT) {
-				humans++;
-			}
 		}
 	}
 
@@ -926,10 +918,6 @@ static void SV_CalcPings( void ) {
 			cl->ping = 999;
 			continue;
 		}
-		if ( cl->gentity->r.svFlags & SVF_BOT ) {
-			cl->ping = 0;
-			continue;
-		}
 
 		total = 0;
 		count = 0;
@@ -1022,7 +1010,7 @@ static qboolean SV_CheckPaused( void ) {
 	// only pause if there is just a single client connected
 	count = 0;
 	for (i=0,cl=svs.clients ; i < sv_maxclients->integer ; i++,cl++) {
-		if ( cl->state >= CS_CONNECTED && cl->netchan.remoteAddress.type != NA_BOT ) {
+		if ( cl->state >= CS_CONNECTED ) {
 			count++;
 		}
 	}
@@ -1112,8 +1100,6 @@ void SV_Frame( int msec ) {
 
 	sv.timeResidual += msec;
 
-	if (!com_dedicated->integer) SV_BotFrame (sv.time + sv.timeResidual);
-
 	// if time is about to hit the 32nd bit, kick all clients
 	// and clear sv.time, rather
 	// than checking for negative time wraparound everywhere.
@@ -1154,8 +1140,6 @@ void SV_Frame( int msec ) {
 
 	// update ping based on the all received frames
 	SV_CalcPings();
-
-	if (com_dedicated->integer) SV_BotFrame (sv.time);
 
 	// run the game simulation in chunks
 	while ( sv.timeResidual >= frameMsec ) {

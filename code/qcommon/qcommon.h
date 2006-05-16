@@ -134,7 +134,6 @@ NET
 
 typedef enum {
 	NA_BAD = 0,					// an address lookup failed
-	NA_BOT,
 	NA_LOOPBACK,
 	NA_BROADCAST,
 	NA_IP,
@@ -1209,6 +1208,12 @@ void	Huff_setBloc(int _bloc);
 
 
 extern huffman_t clientHuffTables;
+
+int		Parse_AddGlobalDefine(char *string);
+int		Parse_LoadSourceHandle(const char *filename);
+int		Parse_FreeSourceHandle(int handle);
+int		Parse_ReadTokenHandle(int handle, pc_token_t *pc_token);
+int		Parse_SourceFileAndLine(int handle, char *filename, int *line);
 
 #define	SV_ENCODE_START		4
 #define SV_DECODE_START		12
