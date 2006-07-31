@@ -47,6 +47,7 @@ set(GAME_SOURCES
     ${SOURCE_DIR}/game/bg_pmove.c
     ${SOURCE_DIR}/game/bg_slidemove.c
     ${SOURCE_DIR}/game/g_active.c
+    ${SOURCE_DIR}/game/g_admin.c
     ${SOURCE_DIR}/game/g_buildable.c
     ${SOURCE_DIR}/game/g_client.c
     ${SOURCE_DIR}/game/g_cmds.c
