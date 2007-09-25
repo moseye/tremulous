@@ -1184,7 +1184,7 @@ typedef struct {
 // bit field limits
 #define	MAX_STATS				16
 #define	MAX_PERSISTANT			16
-#define	MAX_POWERUPS			16
+#define	MAX_MISC				16
 #define	MAX_WEAPONS				16		
 
 #define	MAX_PS_EVENTS			2
@@ -1256,8 +1256,9 @@ typedef struct playerState_s {
 
 	int			stats[MAX_STATS];
 	int			persistant[MAX_PERSISTANT];	// stats that aren't cleared on death
-	int			powerups[MAX_POWERUPS];	// level.time that the powerup runs out
-	int			ammo[MAX_WEAPONS];
+	int			misc[MAX_MISC];	// misc data
+	int			ammo;			// ammo held
+	int			clips;			// clips held
 
 	int			generic1;
 	int			loopSound;
@@ -1372,7 +1373,7 @@ typedef struct entityState_s {
 	int		eventParm;
 
 	// for players
-	int		powerups;		// bit flags
+	int		misc;			// bit flags
 	int		weapon;			// determines weapon and flash model, etc
 	int		legsAnim;		// mask off ANIM_TOGGLEBIT
 	int		torsoAnim;		// mask off ANIM_TOGGLEBIT
