@@ -882,6 +882,7 @@ typedef struct
 
   char      *className;
   char      *humanName;
+  char      *info;
 
   char      *modelName;
   float     modelScale;
@@ -966,6 +967,7 @@ typedef struct
 
   char      *buildName;
   char      *humanName;
+  char      *info;
   char      *entityName;
 
   char      *models[ MAX_BUILDABLE_MODELS ];
@@ -1035,6 +1037,7 @@ typedef struct
 
   char      *weaponName;
   char      *weaponHumanName;
+  char      *info;
 
   int       maxAmmo;
   int       maxClips;
@@ -1073,6 +1076,7 @@ typedef struct
 
   char      *upgradeName;
   char      *upgradeHumanName;
+  char      *info;
 
   char      *icon;
 
@@ -1107,6 +1111,7 @@ int       BG_FindBuildNumForEntityName( char *name );
 char      *BG_FindNameForBuildable( int bclass );
 char      *BG_FindHumanNameForBuildable( int bclass );
 char      *BG_FindEntityNameForBuildable( int bclass );
+char      *BG_FindInfoForBuildable( int bclass );
 char      *BG_FindModelsForBuildable( int bclass, int modelNum );
 float     BG_FindModelScaleForBuildable( int bclass );
 void      BG_FindBBoxForBuildable( int bclass, vec3_t mins, vec3_t maxs );
@@ -1141,6 +1146,7 @@ void      BG_InitBuildableOverrides( void );
 int       BG_FindClassNumForName( char *name );
 char      *BG_FindNameForClassNum( int pclass );
 char      *BG_FindHumanNameForClassNum( int pclass );
+char      *BG_FindInfoForClassNum( int pclass );
 char      *BG_FindModelNameForClass( int pclass );
 float     BG_FindModelScaleForClass( int pclass );
 char      *BG_FindSkinNameForClass( int pclass );
@@ -1178,6 +1184,7 @@ int       BG_FindSlotsForWeapon( int weapon );
 char      *BG_FindNameForWeapon( int weapon );
 int       BG_FindWeaponNumForName( char *name );
 char      *BG_FindHumanNameForWeapon( int weapon );
+char      *BG_FindInfoForWeapon( int weapon );
 char      *BG_FindModelsForWeapon( int weapon, int modelNum );
 char      *BG_FindIconForWeapon( int weapon );
 char      *BG_FindCrosshairForWeapon( int weapon );
@@ -1205,6 +1212,7 @@ int       BG_FindSlotsForUpgrade( int upgrade );
 char      *BG_FindNameForUpgrade( int upgrade );
 int       BG_FindUpgradeNumForName( char *name );
 char      *BG_FindHumanNameForUpgrade( int upgrade );
+char      *BG_FindInfoForUpgrade( int upgrade );
 char      *BG_FindIconForUpgrade( int upgrade );
 qboolean  BG_FindPurchasableForUpgrade( int upgrade );
 qboolean  BG_FindUsableForUpgrade( int upgrade );
