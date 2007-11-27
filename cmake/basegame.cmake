@@ -78,7 +78,6 @@ set(UI_SOURCES
     ${SOURCE_DIR}/game/bg_misc.c
     ${SOURCE_DIR}/ui/ui_atoms.c
     ${SOURCE_DIR}/ui/ui_gameinfo.c
-    ${SOURCE_DIR}/ui/ui_players.c
     ${SOURCE_DIR}/ui/ui_shared.c
 )
 
