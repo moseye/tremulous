@@ -1481,6 +1481,17 @@ typedef enum {
 	DS_NUM_DEMO_STATES
 } demoState_t;
 
+#define MAX_EMOTICON_NAME_LEN 16
+#define MAX_EMOTICONS 64
+
+typedef struct
+{
+  char      name[ MAX_EMOTICON_NAME_LEN ];
+#ifndef GAME
+  int       width;
+  qhandle_t shader;
+#endif
+} emoticon_t;
 
 #define	MAX_GLOBAL_SERVERS				4096
 #define	MAX_OTHER_SERVERS					128
