@@ -277,8 +277,6 @@ typedef struct
   clientList_t      ignoreList;
 } clientSession_t;
 
-#define MAX_NETNAME       36
-
 // data to store details of clients that have abnormally disconnected
 typedef struct connectionRecord_s
 {
@@ -299,7 +297,7 @@ typedef struct
   qboolean            initialSpawn;       // the first spawn should be at a cool location
   qboolean            stickySpec;         // don't stop spectating a player after they get killed
   qboolean            pmoveFixed;         //
-  char                netname[ MAX_NETNAME ];
+  char                netname[ MAX_NAME_LENGTH ];
   int                 maxHealth;          // for handicapping
   int                 enterTime;          // level.time the client entered the game
   int                 location;           // player locations
