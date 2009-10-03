@@ -1504,6 +1504,15 @@ typedef struct
 
 
 
+// flags for com_downloadPrompt
+#define DLP_TYPE_MASK 0x0f
+#define DLP_IGNORE    0x01 // don't download anything
+#define DLP_HTTP      0x02 // download via HTTP redirect
+#define DLP_UDP       0x04 // download from server
+#define DLP_SHOW      0x10 // prompt needs to be shown
+#define DLP_PROMPTED  0x20 // prompt has been processed by client
+#define DLP_STALE     0x40 // prompt is not being shown by UI VM
+
 #define LERP( a, b, w ) ( ( a ) * ( 1.0f - ( w ) ) + ( b ) * ( w ) )
 #define LUMA( red, green, blue ) ( 0.2126f * ( red ) + 0.7152f * ( green ) + 0.0722f * ( blue ) )
 

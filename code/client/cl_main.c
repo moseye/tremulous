@@ -109,6 +109,7 @@ cvar_t	*cl_activeAction;
 cvar_t	*cl_motdString;
 
 cvar_t	*cl_allowDownload;
+cvar_t	*com_downloadPrompt;
 cvar_t	*cl_conXOffset;
 cvar_t	*cl_inGameVideo;
 
@@ -2273,6 +2274,91 @@ void CL_NextDownload(void)
 
 	// We are looking to start a download here
 	if (*clc.downloadList) {
+		// Prompt if we do not allow automatic downloads
+		int prompt = com_downloadPrompt->integer;
+		if( !( prompt & DLP_TYPE_MASK ) &&
+		    !( cl_allowDownload->integer & DLF_ENABLE ) ) {
+			char files[ MAX_INFO_STRING ] = "";
+			char *name, *head, *pure_msg;
+			char *url_msg = "";
+			int i = 0, others = 0, swap = 0, max_list = 12;
+
+			// Set the download URL message
+			if( ( clc.sv_allowDownload & DLF_ENABLE ) &&
+			    !( clc.sv_allowDownload & DLF_NO_REDIRECT ) ) {
+				url_msg = va("The server redirects to the following URL:\n%s",
+				             clc.sv_dlURL);
+				max_list -= 6;
+			}
+
+			// Make a pretty version of the download list
+			name = clc.downloadList;
+			if( *name == '@' )
+				name++;
+
+			do {
+				// Copy remote name
+				head = name;
+				while( *head && *head != '@' )
+					head++;
+
+				swap = *head;
+				*head = 0;
+
+				if( i++ < max_list ) {
+					if( i > 1 )
+						Q_strcat( files, sizeof( files ), ", " );
+					Q_strcat( files, sizeof( files ), name );
+				} else {
+					others++;
+				}
+
+				*head = swap;
+				if( !swap )
+					break;
+
+				// Skip local name
+				head++;
+				while( *head && *head != '@' )
+					head++;
+
+				name = head + 1;
+			} while( *head );
+
+			if( others ) {
+				Q_strcat( files, sizeof( files ), va( "(%d other file%s)\n",
+						  others, others > 1 ? "s" : "" ) );
+			}
+
+			// Set the pure message
+			if( cl_connectedToPureServer ) {
+				if( !( clc.sv_allowDownload & DLF_ENABLE ) ||
+				    ( ( clc.sv_allowDownload & DLF_NO_UDP ) &&
+				    ( clc.sv_allowDownload & DLF_NO_REDIRECT ) ) ) {
+					pure_msg = "You are missing files required by the server. "
+					"The server does not allow downloading. "
+					"You must install these files manually:";
+				} else {
+					pure_msg = "You are missing files required by the server. "
+					"You must download these files or disconnect:";
+				}
+			} else {
+				pure_msg = "You are missing optional files provided by the "
+				"server. You may not need them to play but can "
+				"choose to download them anyway:";
+			}
+
+			Cvar_Set( "com_downloadPromptText",
+			          va("%s\n\n%s\n%s", pure_msg, files, url_msg ) );
+			Cvar_Set( "com_downloadPrompt", va("%d", DLP_SHOW ) );
+			return;
+		}
+
+		if( !( prompt & DLP_PROMPTED ) )
+			Cvar_Set( "com_downloadPrompt", va("%d", prompt | DLP_PROMPTED ) );
+
+		prompt &= DLP_TYPE_MASK;
+
 		s = clc.downloadList;
 
 		// format is:
@@ -2294,7 +2380,10 @@ void CL_NextDownload(void)
 		else
 			s = localName + strlen(localName); // point at the nul byte
 #ifdef USE_HTTP
-		if(!(cl_allowDownload->integer & DLF_NO_REDIRECT)) {
+		if( ( ( cl_allowDownload->integer & DLF_ENABLE ) &&
+		    !( cl_allowDownload->integer & DLF_NO_REDIRECT ) ) ||
+		    prompt == DLP_HTTP ) {
+			Com_Printf("Trying HTTP download: %s; %s\n", localName, remoteName);
 			if(clc.sv_allowDownload & DLF_NO_REDIRECT) {
 				Com_Printf("WARNING: server does not "
 					"allow download redirection "
@@ -2322,12 +2411,23 @@ void CL_NextDownload(void)
 		}
 #endif /* USE_HTTP */
 		if(!usedHTTP) {
-			if((cl_allowDownload->integer & DLF_NO_UDP)) {
-				Com_Error(ERR_DROP, "UDP Downloads are "
-					"disabled on your client. "
-					"(cl_allowDownload is %d)",
+			Com_Printf("Trying UDP download: %s; %s\n", localName, remoteName);
+
+			if( ( !( cl_allowDownload->integer & DLF_ENABLE ) ||
+			    ( cl_allowDownload->integer & DLF_NO_UDP ) ) &&
+			    prompt != DLP_UDP ) {
+				if( cl_connectedToPureServer ) {
+					Com_Error(ERR_DROP, "Automatic downloads are "
+					          "disabled on your client (cl_allowDownload is %d). "
+					          "You can enable automatic downloads in the Options "
+					          "menu.",
 					cl_allowDownload->integer);
 				return;	
+			}
+
+				Com_Printf("WARNING: UDP downloads are disabled.\n");
+				CL_DownloadsComplete();
+				return;
 			}
 			else {
 				CL_InitDownload( localName );
@@ -2354,25 +2454,9 @@ and determine if we need to download them
 =================
 */
 void CL_InitDownloads(void) {
-  char missingfiles[1024];
-
-  if ( !(cl_allowDownload->integer & DLF_ENABLE) )
-  {
-    // autodownload is disabled on the client
-    // but it's possible that some referenced files on the server are missing
-    if (FS_ComparePaks( missingfiles, sizeof( missingfiles ), qfalse ) )
-    {      
-      // NOTE TTimo I would rather have that printed as a modal message box
-      //   but at this point while joining the game we don't know wether we will successfully join or not
-      Com_Printf( "\nWARNING: You are missing some files referenced by the server:\n%s"
-                  "You might not be able to join the game\n"
-                  "Go to the setting menu to turn on autodownload, or get the file elsewhere\n\n", missingfiles );
-    }
-  }
-  else if ( FS_ComparePaks( clc.downloadList, sizeof( clc.downloadList ) , qtrue ) ) {
-
+	if ( FS_ComparePaks( clc.downloadList, sizeof( clc.downloadList ) , qtrue ) ) {
     Com_Printf("Need paks: %s\n", clc.downloadList );
-
+		Cvar_Set( "com_downloadPrompt", "0" );
 		if ( *clc.downloadList ) {
 			// if autodownloading is not enabled on the server
 			clc.state = CA_CONNECTED;
@@ -2995,6 +3079,28 @@ void CL_Frame ( int msec ) {
 
 	if ( !com_cl_running->integer ) {
 		return;
+	}
+
+	// We may have a download prompt ready
+	if( ( com_downloadPrompt->integer & DLP_TYPE_MASK ) &&
+	    !( com_downloadPrompt->integer & DLP_PROMPTED ) ) {
+		Com_Printf( "Download prompt returned %d\n",
+		            com_downloadPrompt->integer );
+		CL_NextDownload( );
+	}
+	else if( com_downloadPrompt->integer & DLP_SHOW ) {
+		// If the UI VM does not support the download prompt, we need to catch
+		// the prompt here and replicate regular behavior.
+		// One frame will always run between requesting and showing the prompt.
+
+		if( com_downloadPrompt->integer & DLP_STALE ) {
+			Com_Printf( "WARNING: UI VM does not support download prompt\n" );
+			Cvar_Set( "com_downloadPrompt", va( "%d", DLP_IGNORE ) );
+			CL_NextDownload( );
+		} else {
+			Cvar_Set( "com_downloadPrompt",
+			          va( "%d", com_downloadPrompt->integer | DLP_STALE ) );
+		}
 	}
 
 #ifdef USE_HTTP
@@ -3630,6 +3736,8 @@ void CL_Init( void ) {
 	cl_showMouseRate = Cvar_Get ("cl_showmouserate", "0", 0);
 
 	cl_allowDownload = Cvar_Get ("cl_allowDownload", "0", CVAR_ARCHIVE);
+	com_downloadPrompt = Cvar_Get ("com_downloadPrompt", "0", CVAR_ROM);
+	Cvar_Get( "com_downloadPromptText", "", CVAR_TEMP );
 
 	cl_conXOffset = Cvar_Get ("cl_conXOffset", "0", 0);
 #ifdef __APPLE__
