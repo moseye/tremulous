@@ -12,6 +12,7 @@ set(CGAME_SOURCES
     ${SOURCE_DIR}/game/bg_misc.c
     ${SOURCE_DIR}/game/bg_pmove.c
     ${SOURCE_DIR}/game/bg_slidemove.c
+    ${SOURCE_DIR}/game/bg_voice.c
     ${SOURCE_DIR}/cgame/cg_animation.c
     ${SOURCE_DIR}/cgame/cg_animmapobj.c
     ${SOURCE_DIR}/cgame/cg_attachment.c
@@ -47,6 +48,7 @@ set(GAME_SOURCES
     ${SOURCE_DIR}/game/bg_misc.c
     ${SOURCE_DIR}/game/bg_pmove.c
     ${SOURCE_DIR}/game/bg_slidemove.c
+    ${SOURCE_DIR}/game/bg_voice.c
     ${SOURCE_DIR}/game/g_active.c
     ${SOURCE_DIR}/game/g_admin.c
     ${SOURCE_DIR}/game/g_buildable.c
