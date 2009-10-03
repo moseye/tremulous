@@ -555,6 +555,9 @@ typedef enum
   MN_TEAM,
   MN_A_TEAMFULL,
   MN_H_TEAMFULL,
+  MN_A_TEAMLOCKED,
+  MN_H_TEAMLOCKED,
+  MN_PLAYERLIMIT,
 
   // cmd stuff
   MN_CMD_CHEAT,
