@@ -2835,6 +2835,10 @@ void CL_ConnectionlessPacket( netadr_t from, msg_t *msg ) {
 			s = MSG_ReadString( msg );
 
 			Q_strncpyz( clc.serverMessage, s, sizeof( clc.serverMessage ) );
+
+			while( clc.serverMessage[ strlen( clc.serverMessage ) - 1 ] == '\n' )
+				clc.serverMessage[ strlen( clc.serverMessage ) - 1 ] = '\0';
+
 			Com_Printf( "%s", s );
 		}
 		return;
