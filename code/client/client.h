@@ -286,11 +286,13 @@ typedef struct {
 	char		info[MAX_INFO_STRING];
 } ping_t;
 
+#define MAX_FEATLABEL_CHARS  32
 typedef struct {
 	netadr_t	adr;
 	char	  	hostName[MAX_HOSTNAME_LENGTH];
 	char	  	mapName[MAX_NAME_LENGTH];
 	char	  	game[MAX_NAME_LENGTH];
+	char		label[MAX_FEATLABEL_CHARS]; // for featured servers, NULL otherwise
 	int			netType;
 	int			gameType;
 	int		  	clients;
@@ -316,6 +318,10 @@ typedef struct {
 
 	int			realtime;			// ignores pause
 	int			realFrametime;		// ignoring pause, so console always works
+
+	// master server sequence information
+	int			numMasterPackets;
+	unsigned int		receivedMasterPackets; // bitfield
 
 	int			numlocalservers;
 	serverInfo_t	localServers[MAX_OTHER_SERVERS];
