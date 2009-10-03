@@ -226,6 +226,7 @@ typedef enum
   STAT_BUILDABLE, // which ghost model to display for building
   STAT_FALLDIST,  // the distance the player fell
   STAT_VIEWLOCK   // direction to lock the view in
+  // netcode has space for 3 more
 } statIndex_t;
 
 #define SCA_WALLCLIMBER         0x00000001
@@ -270,9 +271,9 @@ typedef enum
 
   PERS_STATE,
   PERS_CREDIT,    // human credit
-  PERS_BANK,      // human credit in the bank
   PERS_QUEUEPOS,  // position in the spawn queue
   PERS_NEWWEAPON  // weapon to switch to
+  // netcode has space for 5 more
 } persEnum_t;
 
 #define PS_WALLCLIMBINGFOLLOW   0x00000001
