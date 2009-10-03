@@ -309,7 +309,7 @@ G_FindOvermind
 Attempt to find an overmind for self
 ================
 */
-static qboolean G_FindOvermind( gentity_t *self )
+qboolean G_FindOvermind( gentity_t *self )
 {
   int       i;
   gentity_t *ent;
@@ -348,7 +348,7 @@ G_IsOvermindBuilt
 Simple wrapper to G_FindOvermind to check if a location has an overmind
 ================
 */
-qboolean G_IsOvermindBuilt( void )
+static qboolean G_IsOvermindBuilt( void )
 {
   gentity_t dummy;
 
