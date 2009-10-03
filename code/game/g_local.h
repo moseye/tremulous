@@ -330,6 +330,10 @@ typedef struct
   qboolean            vote;
   qboolean            teamVote;
 
+  // flood protection
+  int                 floodDemerits;
+  int                 floodTime;
+
   vec3_t              lastDeathLocation;
   char                guid[ 33 ];
   char                ip[ 40 ];
@@ -676,6 +680,7 @@ void      G_ChangeTeam( gentity_t *ent, team_t newTeam );
 void      G_SanitiseString( char *in, char *out, int len );
 void      G_PrivateMessage( gentity_t *ent );
 void      Cmd_Test_f( gentity_t *ent );
+qboolean  G_FloodLimited( gentity_t *ent );
 
 //
 // g_physics.c
@@ -1139,6 +1144,9 @@ extern  vmCvar_t  g_chatTeamPrefix;
 
 extern  vmCvar_t  g_debugVoices;
 extern  vmCvar_t  g_voiceChats;
+
+extern  vmCvar_t  g_floodMaxDemerits;
+extern  vmCvar_t  g_floodMinTime;
 
 extern  vmCvar_t  g_shove;
 
