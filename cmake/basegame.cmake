@@ -7,6 +7,7 @@ include(utils/set_output_dirs)
 
 set(CGAME_SOURCES
     ${SOURCE_DIR}/cgame/cg_main.c
+    ${SOURCE_DIR}/game/bg_alloc.c
     ${SOURCE_DIR}/game/bg_lib.c
     ${SOURCE_DIR}/game/bg_misc.c
     ${SOURCE_DIR}/game/bg_pmove.c
@@ -21,7 +22,6 @@ set(CGAME_SOURCES
     ${SOURCE_DIR}/cgame/cg_ents.c
     ${SOURCE_DIR}/cgame/cg_event.c
     ${SOURCE_DIR}/cgame/cg_marks.c
-    ${SOURCE_DIR}/cgame/cg_mem.c
     ${SOURCE_DIR}/cgame/cg_particles.c
     ${SOURCE_DIR}/cgame/cg_players.c
     ${SOURCE_DIR}/cgame/cg_playerstate.c
@@ -42,6 +42,7 @@ set(CGAME_QVM_SOURCES ${SOURCE_DIR}/cgame/cg_syscalls.asm)
 
 set(GAME_SOURCES
     ${SOURCE_DIR}/game/g_main.c
+    ${SOURCE_DIR}/game/bg_alloc.c
     ${SOURCE_DIR}/game/bg_lib.c
     ${SOURCE_DIR}/game/bg_misc.c
     ${SOURCE_DIR}/game/bg_pmove.c
@@ -53,7 +54,6 @@ set(GAME_SOURCES
     ${SOURCE_DIR}/game/g_cmds.c
     ${SOURCE_DIR}/game/g_combat.c
     ${SOURCE_DIR}/game/g_maprotation.c
-    ${SOURCE_DIR}/game/g_mem.c
     ${SOURCE_DIR}/game/g_misc.c
     ${SOURCE_DIR}/game/g_missile.c
     ${SOURCE_DIR}/game/g_mover.c
