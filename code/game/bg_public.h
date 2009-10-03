@@ -628,7 +628,6 @@ typedef enum
   MN_H_NOFUNDS,
   MN_H_ITEMHELD,
   MN_H_TEAMCHANGEBUILDTIMER,
-  MN_H_NOENERGYAMMOHERE,
   MN_H_NOARMOURYHERE,
   MN_H_NOROOMBSUITON,
   MN_H_NOROOMBSUITOFF,
@@ -1137,6 +1136,7 @@ void      BG_PositionBuildableRelativeToPlayer( const playerState_t *ps,
 int       BG_GetValueOfPlayer( playerState_t *ps );
 qboolean  BG_PlayerCanChangeWeapon( playerState_t *ps );
 int       BG_PlayerPoisonCloudTime( playerState_t *ps );
+weapon_t  BG_GetPlayerWeapon( playerState_t *ps );
 
 int       BG_FindValueOfBuildable( int bclass );
 int       BG_FindBuildNumForName( char *name );
