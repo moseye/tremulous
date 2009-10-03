@@ -342,6 +342,44 @@ static void IN_GobbleMotionEvents( void )
 
 /*
 ===============
+IN_GetUIMousePosition
+===============
+*/
+static void IN_GetUIMousePosition( int *x, int *y )
+{
+	if( uivm )
+	{
+		int pos = VM_Call( uivm, UI_MOUSE_POSITION );
+		*x = pos & 0xFFFF;
+		*y = ( pos >> 16 ) & 0xFFFF;
+
+		*x = cls.glconfig.vidWidth * *x / 640;
+		*y = cls.glconfig.vidHeight * *y / 480;
+	}
+	else
+	{
+		*x = cls.glconfig.vidWidth / 2;
+		*y = cls.glconfig.vidHeight / 2;
+	}
+}
+
+/*
+===============
+IN_SetUIMousePosition
+===============
+*/
+static void IN_SetUIMousePosition( int x, int y )
+{
+	if( uivm )
+	{
+		x = x * 640 / cls.glconfig.vidWidth;
+		y = y * 480 / cls.glconfig.vidHeight;
+		VM_Call( uivm, UI_SET_MOUSE_POSITION, x, y );
+	}
+}
+
+/*
+===============
 IN_ActivateMouse
 ===============
 */
@@ -391,7 +429,13 @@ static void IN_DeactivateMouse( qboolean isFullscreen )
 	// Always show the cursor when the mouse is disabled,
 	// but not when fullscreen
 	if( !isFullscreen )
-		SDL_ShowCursor( SDL_TRUE );
+	{
+		if( ( Key_GetCatcher( ) == KEYCATCH_UI ) &&
+		    SDL_GetWindowFlags( SDL_window ) & SDL_WINDOW_MOUSE_FOCUS )
+			SDL_ShowCursor( SDL_FALSE );
+		else
+			SDL_ShowCursor( SDL_TRUE );
+	}
 
 	if( !mouseAvailable )
 		return;
@@ -405,7 +449,11 @@ static void IN_DeactivateMouse( qboolean isFullscreen )
 
 		// Don't warp the mouse unless the cursor is within the window
 		if( SDL_GetWindowFlags( SDL_window ) & SDL_WINDOW_MOUSE_FOCUS )
-			SDL_WarpMouseInWindow( SDL_window, cls.glconfig.vidWidth / 2, cls.glconfig.vidHeight / 2 );
+		{
+			int x, y;
+			IN_GetUIMousePosition( &x, &y );
+			SDL_WarpMouseInWindow( SDL_window, x, y );
+		}
 
 		mouseActive = qfalse;
 	}
@@ -1239,11 +1287,14 @@ IN_Frame
 void IN_Frame( void )
 {
 	qboolean loading;
+	qboolean cursorShowing;
+	int x, y;
 
 	IN_JoyMove( );
 
 	// If not DISCONNECTED (main menu) or ACTIVE (in game), we're loading
 	loading = ( clc.state != CA_DISCONNECTED && clc.state != CA_ACTIVE );
+	cursorShowing = Key_GetCatcher( ) & KEYCATCH_UI;
 
 	// update isFullscreen since it might of changed since the last vid_restart
 	cls.glconfig.isFullscreen = Cvar_VariableIntegerValue( "r_fullscreen" ) != 0;
@@ -1258,6 +1309,11 @@ void IN_Frame( void )
 		// Loading in windowed mode
 		IN_DeactivateMouse( cls.glconfig.isFullscreen );
 	}
+	else if( !cls.glconfig.isFullscreen && cursorShowing )
+	{
+		// Use WM cursor when not fullscreen
+		IN_DeactivateMouse( cls.glconfig.isFullscreen );
+	}
 	else if( !( SDL_GetWindowFlags( SDL_window ) & SDL_WINDOW_INPUT_FOCUS ) )
 	{
 		// Window not got focus
@@ -1269,6 +1325,12 @@ void IN_Frame( void )
 	IN_ProcessEvents( );
 
 	// Set event time for next frame to earliest possible time an event could happen
+	if( !mouseActive )
+	{
+		SDL_GetMouseState( &x, &y );
+		IN_SetUIMousePosition( x, y );
+	}
+
 	in_eventTime = Sys_Milliseconds( );
 
 	// In case we had to delay actual restart of video system
