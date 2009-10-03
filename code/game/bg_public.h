@@ -968,6 +968,7 @@ typedef struct
   int       viewheight;
   int       crouchViewheight;
   float     zOffset;
+  vec3_t    shoulderOffsets;
 } classConfig_t;
 
 //stages
