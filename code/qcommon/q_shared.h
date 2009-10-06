@@ -1500,7 +1500,6 @@ typedef struct
 
 #define SAY_ALL		0
 #define SAY_TEAM	1
-#define SAY_TELL	2
 
 
 
