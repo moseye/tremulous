@@ -2260,6 +2260,7 @@ static void CG_DrawLocation( rectDef_t *rect, float scale, int textalign, vec4_t
   centity_t     *locent;
   float         maxX = rect->x + rect->w;
   float         tx = rect->x, ty = rect->y;
+  qboolean      aligned = qfalse;
 
   locent = CG_GetPlayerLocation( );
   if( locent )
@@ -2268,9 +2269,15 @@ static void CG_DrawLocation( rectDef_t *rect, float scale, int textalign, vec4_t
     location = CG_ConfigString( CS_LOCATIONS );
 
   if( UI_Text_Width( location, scale, 0 ) < rect->w ) 
+  {
     CG_AlignText( rect, location, scale, 0.0f, 0.0f, textalign, VALIGN_CENTER, &tx, &ty );
+    aligned = qtrue;
+  }
 
-  UI_Text_Paint_Limit( &maxX, tx, ty, scale, color, location, 0, 0 );
+  if( aligned && textalign == ALIGN_RIGHT ) // If we aligned right, we're not going to cut off on the right
+    UI_Text_Paint( tx, ty, scale, color, location, 0, 0, ITEM_TEXTSTYLE_NORMAL );
+  else
+    UI_Text_Paint_Limit( &maxX, tx, ty, scale, color, location, 0, 0 );
   trap_R_SetColor( NULL );
 }
 
