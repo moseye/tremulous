@@ -1512,9 +1512,6 @@ typedef struct
 #define MAX_PINGREQUESTS					32
 #define MAX_SERVERSTATUSREQUESTS	16
 
-#define SAY_ALL		0
-#define SAY_TEAM	1
-
 
 
 // flags for com_downloadPrompt
