@@ -431,6 +431,9 @@ qboolean Q_IsColorString(const char *p);  // ^[0-9a-zA-Z]
 #define S_COLOR_MAGENTA	"^6"
 #define S_COLOR_WHITE	"^7"
 
+#define INDENT_MARKER '\v'
+void Q_StripIndentMarker(char *string);
+
 extern vec4_t	g_color_table[8];
 
 #define	MAKERGB( v, r, g, b ) v[0]=r;v[1]=g;v[2]=b

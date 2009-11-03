@@ -1017,6 +1017,18 @@ void Q_ParseNewlines( char *dest, const char *src, int destsize )
   *dest++ = '\0';
 }
 
+void Q_StripIndentMarker(char *string)
+{
+	int i, j;
+
+	for (i = j = 0; string[i]; i++) {
+		if (string[i] != INDENT_MARKER) {
+			string[j++] = string[i];
+		}
+	}
+	string[j] = 0;
+}
+
 int QDECL Com_sprintf(char *dest, int size, const char *fmt, ...)
 {
 	int		len;

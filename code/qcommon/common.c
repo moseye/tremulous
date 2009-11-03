@@ -189,6 +189,8 @@ void QDECL Com_Printf( const char *fmt, ... ) {
 	CL_ConsolePrint( msg );
 #endif
 
+	Q_StripIndentMarker( msg );
+
 	// echo to dedicated console and early console
 	Sys_Print( msg );
 
