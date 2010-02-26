@@ -27,7 +27,6 @@ set(CGAME_SOURCES
     ${SOURCE_DIR}/cgame/cg_players.c
     ${SOURCE_DIR}/cgame/cg_playerstate.c
     ${SOURCE_DIR}/cgame/cg_predict.c
-    ${SOURCE_DIR}/cgame/cg_ptr.c
     ${SOURCE_DIR}/cgame/cg_scanner.c
     ${SOURCE_DIR}/cgame/cg_servercmds.c
     ${SOURCE_DIR}/cgame/cg_snapshot.c
@@ -59,8 +58,8 @@ set(GAME_SOURCES
     ${SOURCE_DIR}/game/g_misc.c
     ${SOURCE_DIR}/game/g_missile.c
     ${SOURCE_DIR}/game/g_mover.c
+    ${SOURCE_DIR}/game/g_namelog.c
     ${SOURCE_DIR}/game/g_physics.c
-    ${SOURCE_DIR}/game/g_ptr.c
     ${SOURCE_DIR}/game/g_session.c
     ${SOURCE_DIR}/game/g_spawn.c
     ${SOURCE_DIR}/game/g_svcmds.c
