@@ -151,6 +151,7 @@ uiMenuCommand_t;
 typedef enum
 {
   SORT_HOST,
+  SORT_GAME,
   SORT_MAP,
   SORT_CLIENTS,
   SORT_PING
