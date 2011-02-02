@@ -2666,8 +2666,8 @@ static void namelog_out( void *namelog, char *str )
 
   for( i = 0; i < MAX_NAMELOG_NAMES && n->name[ i ][ 0 ]; i++ )
   {
-    l = Com_sprintf( p, l2, " '%s%s'%s", n->name[ i ], scolor,
-                    i == n->nameOffset ? "*" : "" );
+    l = Com_sprintf( p, l2, " '" S_COLOR_WHITE "%s%s'%s", n->name[ i ], scolor,
+                     i == n->nameOffset ? "*" : "" );
     p += l;
     l2 -= l;
   }
