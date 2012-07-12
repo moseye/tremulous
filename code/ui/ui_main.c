@@ -1863,7 +1863,7 @@ UI_BuildPlayerList
 static void UI_BuildPlayerList( void )
 {
   uiClientState_t cs;
-  int   n, count, team, team2, playerTeamNumber;
+  int   n, count, team, team2;
   char  info[MAX_INFO_STRING];
 
   trap_GetClientState( &cs );
@@ -1875,7 +1875,6 @@ static void UI_BuildPlayerList( void )
   uiInfo.playerCount = 0;
   uiInfo.myTeamCount = 0;
   uiInfo.myPlayerIndex = 0;
-  playerTeamNumber = 0;
 
   for( n = 0; n < count; n++ )
   {
@@ -1907,9 +1906,6 @@ static void UI_BuildPlayerList( void )
                     Info_ValueForKey( info, "n" ), MAX_NAME_LENGTH );
         Q_CleanStr( uiInfo.teamNames[uiInfo.myTeamCount] );
         uiInfo.teamClientNums[uiInfo.myTeamCount] = n;
-
-        if( uiInfo.playerNumber == n )
-          playerTeamNumber = uiInfo.myTeamCount;
 
         uiInfo.myTeamCount++;
       }
@@ -4000,8 +3996,6 @@ UI_Init
 */
 void UI_Init( qboolean inGameLoad )
 {
-  int start;
-
   BG_InitClassConfigs( );
   BG_InitAllowedGameElements( );
 
@@ -4079,8 +4073,6 @@ void UI_Init( qboolean inGameLoad )
   uiInfo.uiDC.whiteShader = trap_R_RegisterShaderNoMip( "white" );
 
   AssetCache();
-
-  start = trap_Milliseconds();
 
   UI_LoadMenus( "ui/menus.txt", qtrue );
   UI_LoadMenus( "ui/ingame.txt", qfalse );
