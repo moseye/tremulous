@@ -1001,7 +1001,7 @@ void G_AdminMessage( gentity_t *ent, const char *string );
 void QDECL G_LogPrintf( const char *fmt, ... ) Q_PRINTF_FUNC(1, 2);
 void SendScoreboardMessageToAllClients( void );
 void QDECL G_Printf( const char *fmt, ... ) Q_PRINTF_FUNC(1, 2);
-void QDECL G_Error( const char *fmt, ... ) Q_PRINTF_FUNC(1, 2);
+void QDECL G_Error( const char *fmt, ... ) Q_NO_RETURN Q_PRINTF_FUNC(1, 2);
 void G_Vote( gentity_t *ent, team_t team, qboolean voting );
 void G_ExecuteVote( team_t team );
 void G_CheckVote( team_t team );
@@ -1180,7 +1180,7 @@ extern  vmCvar_t  g_allowTeamOverlay;
 extern  vmCvar_t  g_censorship;
 
 void      trap_Print( const char *fmt );
-void      trap_Error( const char *fmt );
+void      trap_Error( const char *fmt ) Q_NO_RETURN;
 int       trap_Milliseconds( void );
 int       trap_RealTime( qtime_t *qtime );
 int       trap_Argc( void );
