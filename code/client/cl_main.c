@@ -56,9 +56,7 @@ cvar_t	*cl_nodelta;
 cvar_t	*cl_debugMove;
 
 cvar_t	*cl_noprint;
-#ifdef UPDATE_SERVER_NAME
 cvar_t	*cl_motd;
-#endif
 
 cvar_t	*rcon_client_password;
 cvar_t	*rconAddress;
@@ -1560,33 +1558,39 @@ CL_RequestMotd
 ===================
 */
 void CL_RequestMotd( void ) {
-#ifdef UPDATE_SERVER_NAME
 	char		info[MAX_INFO_STRING];
 
 	if ( !cl_motd->integer ) {
 		return;
 	}
-	Com_Printf( "Resolving %s\n", UPDATE_SERVER_NAME );
-	if ( !NET_StringToAdr( UPDATE_SERVER_NAME, &cls.updateServer, NA_IP ) ) {
-		Com_Printf( "Couldn't resolve address\n" );
-		return;
+	Com_Printf( "Resolving %s\n", MASTER_SERVER_NAME );
+
+	switch( NET_StringToAdr( MASTER_SERVER_NAME, &cls.updateServer,
+	                         NA_UNSPEC ) )
+	{
+		case 0:
+			Com_Printf( "Couldn't resolve master address\n" );
+			return;
+
+		case 2:
+			cls.updateServer.port = BigShort( PORT_MASTER );
+		default:
+			break;
 	}
-	cls.updateServer.port = BigShort( PORT_UPDATE );
-	Com_Printf( "%s resolved to %i.%i.%i.%i:%i\n", UPDATE_SERVER_NAME,
-		cls.updateServer.ip[0], cls.updateServer.ip[1],
-		cls.updateServer.ip[2], cls.updateServer.ip[3],
-		BigShort( cls.updateServer.port ) );
-	
+
+	Com_Printf( "%s resolved to %s\n", MASTER_SERVER_NAME,
+	            NET_AdrToStringwPort( cls.updateServer ) );
+
 	info[0] = 0;
 
-	Com_sprintf( cls.updateChallenge, sizeof( cls.updateChallenge ), "%i", (int)((((unsigned int)rand() << 16) ^ (unsigned int)rand()) ^ Com_Milliseconds()));
+	Com_sprintf( cls.updateChallenge, sizeof( cls.updateChallenge ),
+			"%i", ((rand() << 16) ^ rand()) ^ Com_Milliseconds());
 
 	Info_SetValueForKey( info, "challenge", cls.updateChallenge );
 	Info_SetValueForKey( info, "renderer", cls.glconfig.renderer_string );
 	Info_SetValueForKey( info, "version", com_version->string );
 
-	NET_OutOfBandPrint( NS_CLIENT, cls.updateServer, "getmotd \"%s\"\n", info );
-#endif
+	NET_OutOfBandPrint( NS_CLIENT, cls.updateServer, "getmotd%s", info );
 }
 
 /*
@@ -2556,29 +2560,31 @@ CL_MotdPacket
 
 ===================
 */
-void CL_MotdPacket( netadr_t from ) {
-#ifdef UPDATE_SERVER_NAME
-	char	*challenge;
-	char	*info;
+void CL_MotdPacket( netadr_t from, const char *info ) {
+	const char *v;
 
 	// if not from our server, ignore it
 	if ( !NET_CompareAdr( from, cls.updateServer ) ) {
+		Com_DPrintf( "MOTD packet from unexpected source\n" );
 		return;
 	}
 
-	info = Cmd_Argv(1);
+	Com_DPrintf( "MOTD packet: %s\n", info );
+	while( *info != '\\' )
+		info++;
 
 	// check challenge
-	challenge = Info_ValueForKey( info, "challenge" );
-	if ( strcmp( challenge, cls.updateChallenge ) ) {
+	v = Info_ValueForKey( info, "challenge" );
+	if ( strcmp( v, cls.updateChallenge ) ) {
+		Com_DPrintf( "MOTD packet mismatched challenge: "
+		             "'%s' != '%s'\n", v, cls.updateChallenge );
 		return;
 	}
 
-	challenge = Info_ValueForKey( info, "motd" );
+	v = Info_ValueForKey( info, "motd" );
 
 	Q_strncpyz( cls.updateInfoString, info, sizeof( cls.updateInfoString ) );
-	Cvar_Set( "cl_motdString", challenge );
-#endif
+	Cvar_Set( "cl_motdString", v );
 }
 
 /*
@@ -2906,9 +2912,9 @@ void CL_ConnectionlessPacket( netadr_t from, msg_t *msg ) {
 		return;
 	}
 
-	// global MOTD from id
+	// global MOTD from trem master
 	if ( !Q_stricmp(c, "motd") ) {
-		CL_MotdPacket( from );
+		CL_MotdPacket( from, s );
 		return;
 	}
 
@@ -3690,9 +3696,7 @@ void CL_Init( void ) {
 	// register our variables
 	//
 	cl_noprint = Cvar_Get( "cl_noprint", "0", 0 );
-#ifdef UPDATE_SERVER_NAME
 	cl_motd = Cvar_Get ("cl_motd", "1", 0);
-#endif
 
 	cl_timeout = Cvar_Get ("cl_timeout", "200", 0);
 
@@ -4433,6 +4437,7 @@ void CL_GlobalServers_f( void ) {
 	}
 
 	NET_OutOfBandPrint( NS_SERVER, to, "%s", command );
+	CL_RequestMotd();
 }
 
 
