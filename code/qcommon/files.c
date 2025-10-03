@@ -249,9 +249,6 @@ static	cvar_t		*fs_debug;
 static	cvar_t		*fs_homepath;
 
 static	cvar_t		*fs_apppath;
-static	cvar_t		*fs_steampath;
-static	cvar_t		*fs_gogpath;
-static	cvar_t		*fs_microsoftstorepath;
 
 static	cvar_t		*fs_basepath;
 static	cvar_t		*fs_basegame;
@@ -3297,9 +3294,6 @@ static void FS_InitPathVars( void ) {
 	FS_AddPathVar( fs_homepath );
 	FS_AddPathVar( fs_basepath );
 	FS_AddPathVar( fs_apppath );
-	FS_AddPathVar( fs_steampath );
-	FS_AddPathVar( fs_gogpath );
-	FS_AddPathVar( fs_microsoftstorepath );
 }
 
 /*
@@ -3324,9 +3318,6 @@ static void FS_Startup( const char *gameName )
 	}
 	fs_homepath = Cvar_Get ("fs_homepath", homePath, CVAR_INIT|CVAR_PROTECTED );
 	fs_gamedirvar = Cvar_Get ("fs_game", "", CVAR_INIT|CVAR_SYSTEMINFO );
-	fs_steampath = Cvar_Get ("fs_steampath", Sys_SteamPath(), CVAR_INIT|CVAR_PROTECTED );
-	fs_gogpath = Cvar_Get ("fs_gogpath", Sys_GogPath(), CVAR_INIT|CVAR_PROTECTED );
-	fs_microsoftstorepath = Cvar_Get ("fs_microsoftstorepath", Sys_MicrosoftStorePath(), CVAR_INIT|CVAR_PROTECTED );
 
 #ifdef __APPLE__
 	fs_apppath = Cvar_Get ("fs_apppath", Sys_DefaultAppPath(), CVAR_INIT|CVAR_PROTECTED );

@@ -179,39 +179,6 @@ char *Sys_DefaultHomePath(void)
 	return homePath;
 }
 
-/*
-================
-Sys_SteamPath
-================
-*/
-char *Sys_SteamPath( void )
-{
-	// Steam doesn't let you install Quake 3 on Mac/Linux
-	return "";
-}
-
-/*
-================
-Sys_GogPath
-================
-*/
-char *Sys_GogPath( void )
-{
-	// GOG doesn't let you install Quake 3 on Mac/Linux
-	return "";
-}
-
-/*
-================
-Sys_MicrosoftStorePath
-================
-*/
-char* Sys_MicrosoftStorePath(void)
-{
-	// Microsoft Store doesn't exist on Mac/Linux
-	return "";
-}
-
 
 /*
 ================
