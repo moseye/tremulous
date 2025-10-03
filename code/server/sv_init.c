@@ -442,11 +442,6 @@ void SV_SpawnServer( char *server, qboolean killBots ) {
 	// server has changed
 	svs.snapFlagServerBit ^= SNAPFLAG_SERVERCOUNT;
 
-	// set nextmap to the same map, but it may be overriden
-	// by the game startup or another console command
-	Cvar_Set( "nextmap", "map_restart 0");
-//	Cvar_Set( "nextmap", va("map %s", server) );
-
 	for (i=0 ; i<sv_maxclients->integer ; i++) {
 		// save when the server started for each client already connected
 		if (svs.clients[i].state >= CS_CONNECTED) {
@@ -490,9 +485,6 @@ void SV_SpawnServer( char *server, qboolean killBots ) {
 
 	// load and spawn all other entities
 	SV_InitGameProgs();
-
-	// don't allow a map_restart if game is modified
-	sv_gametype->modified = qfalse;
 
 	// run a few frames to allow everything to settle
 	for (i = 0;i < 3; i++)
@@ -630,10 +622,7 @@ void SV_Init (void)
 	SV_AddOperatorCommands ();
 
 	// serverinfo vars
-	Cvar_Get ("dmflags", "0", CVAR_SERVERINFO);
-	Cvar_Get ("fraglimit", "20", CVAR_SERVERINFO);
 	Cvar_Get ("timelimit", "0", CVAR_SERVERINFO);
-	sv_gametype = Cvar_Get ("g_gametype", "0", CVAR_SERVERINFO | CVAR_LATCH );
 	Cvar_Get ("sv_keywords", "", CVAR_SERVERINFO);
 	sv_mapname = Cvar_Get ("mapname", "nomap", CVAR_SERVERINFO | CVAR_ROM);
 	sv_privateClients = Cvar_Get ("sv_privateClients", "0", CVAR_SERVERINFO);
@@ -667,7 +656,6 @@ void SV_Init (void)
 	sv_fps = Cvar_Get ("sv_fps", "20", CVAR_TEMP );
 	sv_timeout = Cvar_Get ("sv_timeout", "200", CVAR_TEMP );
 	sv_zombietime = Cvar_Get ("sv_zombietime", "2", CVAR_TEMP );
-	Cvar_Get ("nextmap", "", CVAR_TEMP );
 
 	sv_allowDownload = Cvar_Get ("sv_allowDownload", "0", CVAR_SERVERINFO);
 	Cvar_Get ("sv_dlURL", "", CVAR_SERVERINFO | CVAR_ARCHIVE);

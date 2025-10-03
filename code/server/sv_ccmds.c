@@ -170,24 +170,7 @@ static void SV_Map_f( void ) {
 		return;
 	}
 
-	// force latched values to get set
-	Cvar_Get ("g_gametype", "0", CVAR_SERVERINFO | CVAR_USERINFO | CVAR_LATCH );
-
 	cmd = Cmd_Argv(0);
-	if( Q_stricmpn( cmd, "sp", 2 ) == 0 ) {
-		Cvar_SetValue( "g_gametype", GT_SINGLE_PLAYER );
-		Cvar_SetValue( "g_doWarmup", 0 );
-		// may not set sv_maxclients directly, always set latched
-		Cvar_SetLatched( "sv_maxclients", "8" );
-		cmd += 2;
-		if (!Q_stricmp( cmd, "devmap" ) ) {
-			cheat = qtrue;
-		} else {
-			cheat = qfalse;
-		}
-		killBots = qtrue;
-	}
-	else {
 		if ( !Q_stricmp( cmd, "devmap" ) ) {
 			cheat = qtrue;
 			killBots = qtrue;
@@ -195,10 +178,6 @@ static void SV_Map_f( void ) {
 			cheat = qfalse;
 			killBots = qfalse;
 		}
-		if( sv_gametype->integer == GT_SINGLE_PLAYER ) {
-			Cvar_SetValue( "g_gametype", GT_FFA );
-		}
-	}
 
 	// save the map name here cause on a map restart we reload the q3config.cfg
 	// and thus nuke the arguments of the map command
@@ -262,7 +241,7 @@ static void SV_MapRestart_f( void ) {
 
 	// check for changes in variables that can't just be restarted
 	// check for maxclients change
-	if ( sv_maxclients->modified || sv_gametype->modified ) {
+	if ( sv_maxclients->modified ) {
 		char	mapname[MAX_QPATH];
 
 		Com_Printf( "variable change -- restarting.\n" );
@@ -1541,14 +1520,8 @@ void SV_AddOperatorCommands( void ) {
 	Cmd_AddCommand ("sectorlist", SV_SectorList_f);
 	Cmd_AddCommand ("map", SV_Map_f);
 	Cmd_SetCommandCompletionFunc( "map", SV_CompleteMapName );
-#ifndef PRE_RELEASE_DEMO
 	Cmd_AddCommand ("devmap", SV_Map_f);
 	Cmd_SetCommandCompletionFunc( "devmap", SV_CompleteMapName );
-	Cmd_AddCommand ("spmap", SV_Map_f);
-	Cmd_SetCommandCompletionFunc( "spmap", SV_CompleteMapName );
-	Cmd_AddCommand ("spdevmap", SV_Map_f);
-	Cmd_SetCommandCompletionFunc( "spdevmap", SV_CompleteMapName );
-#endif
 	Cmd_AddCommand ("killserver", SV_KillServer_f);
 	if( com_dedicated->integer ) {
 		Cmd_AddCommand ("say", SV_ConSay_f);

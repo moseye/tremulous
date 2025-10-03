@@ -55,8 +55,6 @@ END
 // remains consistent on all systems.
 #ifdef WINDOWS_ICON_PATH
 IDI_ICON1               ICON    DISCARDABLE     WINDOWS_ICON_PATH
-#else
-IDI_ICON1               ICON    DISCARDABLE     "quake3.ico"
 #endif
 
 
@@ -67,7 +65,7 @@ IDI_ICON1               ICON    DISCARDABLE     "quake3.ico"
 
 STRINGTABLE DISCARDABLE 
 BEGIN
-    IDS_STRING1             "Quake3"
+    IDS_STRING1             "Tremulous"
 END
 
 /////////////////////////////////////////////////////////////////////////////

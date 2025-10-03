@@ -27,19 +27,19 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // A user mod should never modify this file
 
 #ifdef STANDALONE
-  #define PRODUCT_NAME				"iofoo3"
-  #define BASEGAME					"foobar"
-  #define CLIENT_WINDOW_TITLE		"changeme"
-  #define CLIENT_WINDOW_MIN_TITLE	"changeme2"
-  #define HOMEPATH_NAME_UNIX		".foo"
-  #define HOMEPATH_NAME_WIN			"FooBar"
+  #define PRODUCT_NAME				"tremulous"
+  #define BASEGAME					"base"
+  #define CLIENT_WINDOW_TITLE		"Tremulous"
+  #define CLIENT_WINDOW_MIN_TITLE	"Tremulous"
+  #define HOMEPATH_NAME_UNIX		".tremulous"
+  #define HOMEPATH_NAME_WIN			"Tremulous"
   #define HOMEPATH_NAME_MACOSX		HOMEPATH_NAME_WIN
-  #define GAMENAME_FOR_MASTER		"foobar"	// must NOT contain whitespace
+  #define GAMENAME_FOR_MASTER		"Tremulous"	// must NOT contain whitespace
   #define CINEMATICS_LOGO		"foologo.roq"
   #define CINEMATICS_INTRO		"intro.roq"
 //  #define LEGACY_PROTOCOL	// You probably don't need this for your standalone game
 //  #define PROTOCOL_HANDLER		"foobar"
-  #define CONFIG_PREFIX			"fooconfig"
+  #define CONFIG_PREFIX			"autogen"
 #else
   #define PRODUCT_NAME				"ioq3"
   #define BASEGAME					"baseq3"
@@ -368,6 +368,14 @@ typedef	int	fixed16_t;
 #define M_PI		3.14159265358979323846f	// matches value in gcc v2 math.h
 #endif
 
+#ifndef M_SQRT2
+#define M_SQRT2 1.414213562f
+#endif
+
+#ifndef M_ROOT3
+#define M_ROOT3 1.732050808f
+#endif
+
 #define NUMVERTEXNORMALS	162
 extern	vec3_t	bytedirs[NUMVERTEXNORMALS];
 
@@ -540,6 +548,9 @@ void ByteToDir( int b, vec3_t dir );
 #define VectorCopy(a,b)			((b)[0]=(a)[0],(b)[1]=(a)[1],(b)[2]=(a)[2])
 #define	VectorScale(v, s, o)	((o)[0]=(v)[0]*(s),(o)[1]=(v)[1]*(s),(o)[2]=(v)[2]*(s))
 #define	VectorMA(v, s, b, o)	((o)[0]=(v)[0]+(b)[0]*(s),(o)[1]=(v)[1]+(b)[1]*(s),(o)[2]=(v)[2]+(b)[2]*(s))
+#define VectorLerp2( f, s, e, r ) ((r)[0]=(s)[0]+(f)*((e)[0]-(s)[0]),\
+  (r)[1]=(s)[1]+(f)*((e)[1]-(s)[1]),\
+  (r)[2]=(s)[2]+(f)*((e)[2]-(s)[2]))
 
 #else
 
@@ -563,10 +574,16 @@ typedef struct {
 #endif
 #endif
 
+#define Vector2Set(v, x, y) ((v)[0]=(x), (v)[1]=(y))
 #define VectorClear(a)			((a)[0]=(a)[1]=(a)[2]=0)
 #define VectorNegate(a,b)		((b)[0]=-(a)[0],(b)[1]=-(a)[1],(b)[2]=-(a)[2])
 #define VectorSet(v, x, y, z)	((v)[0]=(x), (v)[1]=(y), (v)[2]=(z))
 #define Vector4Copy(a,b)		((b)[0]=(a)[0],(b)[1]=(a)[1],(b)[2]=(a)[2],(b)[3]=(a)[3])
+#define Vector4Add(a,b,c)    ((c)[0]=(a)[0]+(b)[0],(c)[1]=(a)[1]+(b)[1],(c)[2]=(a)[2]+(b)[2],(c)[3]=(a)[3]+(b)[3])
+#define Vector4Lerp( f, s, e, r ) ((r)[0]=(s)[0]+(f)*((e)[0]-(s)[0]),\
+  (r)[1]=(s)[1]+(f)*((e)[1]-(s)[1]),\
+  (r)[2]=(s)[2]+(f)*((e)[2]-(s)[2]),\
+  (r)[3]=(s)[3]+(f)*((e)[3]-(s)[3]))
 
 #define Byte4Copy(a,b)			((b)[0]=(a)[0],(b)[1]=(a)[1],(b)[2]=(a)[2],(b)[3]=(a)[3])
 
@@ -595,6 +612,22 @@ static ID_INLINE int VectorCompare( const vec3_t v1, const vec3_t v2 ) {
 	if (v1[0] != v2[0] || v1[1] != v2[1] || v1[2] != v2[2]) {
 		return 0;
 	}			
+	return 1;
+}
+
+static ID_INLINE int VectorCompareEpsilon(
+		const vec3_t v1, const vec3_t v2, float epsilon )
+{
+	vec3_t d;
+
+	VectorSubtract( v1, v2, d );
+	d[ 0 ] = fabs( d[ 0 ] );
+	d[ 1 ] = fabs( d[ 1 ] );
+	d[ 2 ] = fabs( d[ 2 ] );
+
+	if( d[ 0 ] > epsilon || d[ 1 ] > epsilon || d[ 2 ] > epsilon )
+		return 0;
+
 	return 1;
 }
 
@@ -681,6 +714,7 @@ float	Q_crandom( int *seed );
 
 void vectoangles( const vec3_t value1, vec3_t angles);
 void AnglesToAxis( const vec3_t angles, vec3_t axis[3] );
+void AxisToAngles( vec3_t axis[3], vec3_t angles );
 
 void AxisClear( vec3_t axis[3] );
 void AxisCopy( vec3_t in[3], vec3_t out[3] );
@@ -707,15 +741,35 @@ float AngleDelta ( float angle1, float angle2 );
 qboolean PlaneFromPoints( vec4_t plane, const vec3_t a, const vec3_t b, const vec3_t c );
 void ProjectPointOnPlane( vec3_t dst, const vec3_t p, const vec3_t normal );
 void RotatePointAroundVector( vec3_t dst, const vec3_t dir, const vec3_t point, float degrees );
-void RotateAroundDirection( vec3_t axis[3], float yaw );
+void RotateAroundDirection( vec3_t axis[3], vec_t angle );
 void MakeNormalVectors( const vec3_t forward, vec3_t right, vec3_t up );
 // perpendicular vector could be replaced by this
 
 //int	PlaneTypeForNormal (vec3_t normal);
 
 void MatrixMultiply(float in1[3][3], float in2[3][3], float out[3][3]);
+void VectorMatrixMultiply( const vec3_t p, vec3_t m[ 3 ], vec3_t out );
 void AngleVectors( const vec3_t angles, vec3_t forward, vec3_t right, vec3_t up);
 void PerpendicularVector( vec3_t dst, const vec3_t src );
+
+void GetPerpendicularViewVector( const vec3_t point, const vec3_t p1,
+		const vec3_t p2, vec3_t up );
+void ProjectPointOntoVector( vec3_t point, vec3_t vStart,
+		vec3_t vEnd, vec3_t vProj );
+float VectorDistance( vec3_t v1, vec3_t v2 );
+
+float pointToLineDistance( const vec3_t point, const vec3_t p1, const vec3_t p2 );
+float VectorMinComponent( vec3_t v );
+float VectorMaxComponent( vec3_t v );
+
+vec_t DistanceBetweenLineSegmentsSquared(
+    const vec3_t sP0, const vec3_t sP1,
+    const vec3_t tP0, const vec3_t tP1,
+    float *s, float *t );
+vec_t DistanceBetweenLineSegments(
+    const vec3_t sP0, const vec3_t sP1,
+    const vec3_t tP0, const vec3_t tP1,
+    float *s, float *t );
 
 #ifndef MAX
 #define MAX(x,y) ((x)>(y)?(x):(y))
@@ -1086,6 +1140,7 @@ typedef enum {
 
 #define	GENTITYNUM_BITS		10		// don't need to send any more
 #define	MAX_GENTITIES		(1<<GENTITYNUM_BITS)
+#define	GENTITYNUM_MASK		(MAX_GENTITIES - 1)
 
 // entitynums are communicated with GENTITY_BITS, so any reserved
 // values that are going to be communcated over the net need to
@@ -1216,20 +1271,17 @@ typedef struct playerState_s {
 //
 #define	BUTTON_ATTACK		1
 #define	BUTTON_TALK			2			// displays talk balloon and disables actions
-#define	BUTTON_USE_HOLDABLE	4
+#define	BUTTON_USE_HOLDABLE	4			// activate upgrade
 #define	BUTTON_GESTURE		8
 #define	BUTTON_WALKING		16			// walking can't just be inferred from MOVE_RUN
 										// because a key pressed late in the frame will
 										// only generate a small move value for that frame
 										// walking will use different animations and
 										// won't generate footsteps
-#define BUTTON_AFFIRMATIVE	32
-#define	BUTTON_NEGATIVE		64
-
-#define BUTTON_GETFLAG		128
-#define BUTTON_GUARDBASE	256
-#define BUTTON_PATROL		512
-#define BUTTON_FOLLOWME		1024
+#define BUTTON_ATTACK2		32
+#define BUTTON_DODGE		64			// start a dodge or sprint motion
+#define BUTTON_USE_EVOLVE	128			// use target or open evolve menu
+#define BUTTON_SPRINT		256
 
 #define	BUTTON_ANY			2048			// any key whatsoever
 
@@ -1256,7 +1308,8 @@ typedef enum {
 	TR_LINEAR,
 	TR_LINEAR_STOP,
 	TR_SINE,					// value = base + sin( time / duration ) * delta
-	TR_GRAVITY
+	TR_GRAVITY,
+	TR_BUOYANCY
 } trType_t;
 
 typedef struct {

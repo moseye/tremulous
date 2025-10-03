@@ -297,9 +297,6 @@ static void LAN_GetServerInfo( int source, int n, char *buf, int buflen ) {
 		Info_SetValueForKey( info, "gametype", va("%i",server->gameType));
 		Info_SetValueForKey( info, "nettype", va("%i",server->netType));
 		Info_SetValueForKey( info, "addr", NET_AdrToStringwPort(server->adr));
-		Info_SetValueForKey( info, "punkbuster", va("%i", server->punkbuster));
-		Info_SetValueForKey( info, "g_needpass", va("%i", server->g_needpass));
-		Info_SetValueForKey( info, "g_humanplayers", va("%i", server->g_humanplayers));
 		Q_strncpyz(buf, info, buflen);
 	} else {
 		if (buf) {
@@ -405,17 +402,6 @@ static int LAN_CompareServers( int source, int sortKey, int sortDir, int s1, int
 				res = -1;
 			}
 			else if (clients1 > clients2) {
-				res = 1;
-			}
-			else {
-				res = 0;
-			}
-			break;
-		case SORT_GAME:
-			if (server1->gameType < server2->gameType) {
-				res = -1;
-			}
-			else if (server1->gameType > server2->gameType) {
 				res = 1;
 			}
 			else {
@@ -1124,7 +1110,6 @@ void CL_InitUI( void ) {
 	// sanity check
 	v = VM_Call( uivm, UI_GETAPIVERSION );
 	if (v == UI_OLD_API_VERSION) {
-//		Com_Printf(S_COLOR_YELLOW "WARNING: loading old Quake III Arena User Interface version %d\n", v );
 		// init for this gamestate
 		VM_Call( uivm, UI_INIT, (clc.state >= CA_AUTHORIZING && clc.state < CA_ACTIVE));
 	}

@@ -1253,7 +1253,7 @@ void ClientThink_real( gentity_t *ent )
   client->buttons = ucmd->buttons;
   client->latched_buttons |= client->buttons & ~client->oldbuttons;
 
-  if( ( client->buttons & BUTTON_GETFLAG ) && !( client->oldbuttons & BUTTON_GETFLAG ) &&
+  if( ( client->buttons & BUTTON_USE_EVOLVE ) && !( client->oldbuttons & BUTTON_USE_EVOLVE ) &&
        client->ps.stats[ STAT_HEALTH ] > 0 )
   {
     trace_t   trace;

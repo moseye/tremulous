@@ -255,8 +255,6 @@ void CL_Voip_f( void )
 		reason = "Voip codec not initialized";
 	else if (!clc.voipEnabled)
 		reason = "Server doesn't support VoIP";
-	else if (!clc.demoplaying && (Cvar_VariableValue( "g_gametype" ) == GT_SINGLE_PLAYER || Cvar_VariableValue("ui_singlePlayerActive")))
-		reason = "running in single-player mode";
 
 	if (reason != NULL) {
 		Com_Printf("VoIP: command ignored: %s\n", reason);
@@ -1301,8 +1299,6 @@ void CL_MapLoading( void ) {
 		clc.lastPacketSentTime = -9999;
 		SCR_UpdateScreen();
 	} else {
-		// clear nextmap so the cinematic shutdown doesn't execute it
-		Cvar_Set( "nextmap", "" );
 		CL_Disconnect( qtrue );
 		Q_strncpyz( clc.servername, "localhost", sizeof(clc.servername) );
 		clc.state = CA_CHALLENGING;		// so the connect screen is drawn
@@ -2485,9 +2481,6 @@ void CL_InitServerInfo( serverInfo_t *server, netadr_t *address ) {
 	server->game[0] = '\0';
 	server->gameType = 0;
 	server->netType = 0;
-	server->punkbuster = 0;
-	server->g_humanplayers = 0;
-	server->g_needpass = 0;
 }
 
 #define MAX_SERVERSPERPACKET	256
@@ -3615,10 +3608,6 @@ void CL_Init( void ) {
 
 	cl_serverStatusResendTime = Cvar_Get ("cl_serverStatusResendTime", "750", 0);
 
-	// init autoswitch so the ui will have it correctly even
-	// if the cgame hasn't been started
-	Cvar_Get ("cg_autoswitch", "1", CVAR_ARCHIVE);
-
 	m_pitch = Cvar_Get ("m_pitch", "0.022", CVAR_ARCHIVE);
 	m_yaw = Cvar_Get ("m_yaw", "0.022", CVAR_ARCHIVE);
 	m_forward = Cvar_Get ("m_forward", "0.25", CVAR_ARCHIVE);
@@ -3663,21 +3652,12 @@ void CL_Init( void ) {
 	Cvar_Get ("name", "UnnamedPlayer", CVAR_USERINFO | CVAR_ARCHIVE );
 	cl_rate = Cvar_Get ("rate", "25000", CVAR_USERINFO | CVAR_ARCHIVE );
 	Cvar_Get ("snaps", "20", CVAR_USERINFO | CVAR_ARCHIVE );
-	Cvar_Get ("model", "sarge", CVAR_USERINFO | CVAR_ARCHIVE );
-	Cvar_Get ("headmodel", "sarge", CVAR_USERINFO | CVAR_ARCHIVE );
-	Cvar_Get ("team_model", "james", CVAR_USERINFO | CVAR_ARCHIVE );
-	Cvar_Get ("team_headmodel", "*james", CVAR_USERINFO | CVAR_ARCHIVE );
-	Cvar_Get ("g_redTeam", "Stroggs", CVAR_SERVERINFO | CVAR_ARCHIVE);
-	Cvar_Get ("g_blueTeam", "Pagans", CVAR_SERVERINFO | CVAR_ARCHIVE);
 	Cvar_Get ("color1",  "4", CVAR_USERINFO | CVAR_ARCHIVE );
 	Cvar_Get ("color2", "5", CVAR_USERINFO | CVAR_ARCHIVE );
 	Cvar_Get ("handicap", "100", CVAR_USERINFO | CVAR_ARCHIVE );
-	Cvar_Get ("teamtask", "0", CVAR_USERINFO );
 	Cvar_Get ("sex", "male", CVAR_USERINFO | CVAR_ARCHIVE );
-	Cvar_Get ("cl_anonymous", "0", CVAR_USERINFO | CVAR_ARCHIVE );
 
 	Cvar_Get ("password", "", CVAR_USERINFO);
-	Cvar_Get ("cg_predictItems", "1", CVAR_USERINFO | CVAR_ARCHIVE );
 
 #ifdef USE_MUMBLE
 	cl_useMumble = Cvar_Get ("cl_useMumble", "0", CVAR_ARCHIVE | CVAR_LATCH);
@@ -3841,9 +3821,6 @@ static void CL_SetServerInfo(serverInfo_t *server, const char *info, int ping) {
 			server->netType = atoi(Info_ValueForKey(info, "nettype"));
 			server->minPing = atoi(Info_ValueForKey(info, "minping"));
 			server->maxPing = atoi(Info_ValueForKey(info, "maxping"));
-			server->punkbuster = atoi(Info_ValueForKey(info, "punkbuster"));
-			server->g_humanplayers = atoi(Info_ValueForKey(info, "g_humanplayers"));
-			server->g_needpass = atoi(Info_ValueForKey(info, "g_needpass"));
 		}
 		server->ping = ping;
 	}

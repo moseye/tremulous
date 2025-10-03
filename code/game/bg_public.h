@@ -41,6 +41,10 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define CROUCH_VIEWHEIGHT       12
 #define DEAD_VIEWHEIGHT         -14 //TA: watch for mins[ 2 ] less than this causing
 
+#define	MAX_GAME_SHADERS						64
+#define	MAX_GAME_PARTICLE_SYSTEMS		64
+#define	MAX_PARTICLE_FILES					128
+
 //
 // config strings are a general means of communicating variable length strings
 // from the server to all connected clients.

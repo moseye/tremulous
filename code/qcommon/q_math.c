@@ -290,58 +290,49 @@ This is not implemented very well...
 */
 void RotatePointAroundVector( vec3_t dst, const vec3_t dir, const vec3_t point,
 							 float degrees ) {
-	float	m[3][3];
-	float	im[3][3];
-	float	zrot[3][3];
-	float	tmpmat[3][3];
-	float	rot[3][3];
-	int	i;
-	vec3_t vr, vup, vf;
-	float	rad;
+	float sin_a;
+	float cos_a;
+	float cos_ia;
+	float i_i_ia;
+	float j_j_ia;
+	float k_k_ia;
+	float i_j_ia;
+	float i_k_ia;
+	float	j_k_ia;
+	float a_sin;
+	float b_sin;
+	float c_sin;
+	float rot[3][3];
 
-	vf[0] = dir[0];
-	vf[1] = dir[1];
-	vf[2] = dir[2];
+	cos_ia = DEG2RAD(degrees);
+	sin_a = sin(cos_ia);
+	cos_a = cos(cos_ia);
+	cos_ia = 1.0F - cos_a;
 
-	PerpendicularVector( vr, dir );
-	CrossProduct( vr, vf, vup );
+	i_i_ia = dir[0] * dir[0] * cos_ia;
+	j_j_ia = dir[1] * dir[1] * cos_ia;
+	k_k_ia = dir[2] * dir[2] * cos_ia;
+	i_j_ia = dir[0] * dir[1] * cos_ia;
+	i_k_ia = dir[0] * dir[2] * cos_ia;
+	j_k_ia = dir[1] * dir[2] * cos_ia;
 
-	m[0][0] = vr[0];
-	m[1][0] = vr[1];
-	m[2][0] = vr[2];
+	a_sin = dir[0] * sin_a;
+	b_sin = dir[1] * sin_a;
+	c_sin = dir[2] * sin_a;
 
-	m[0][1] = vup[0];
-	m[1][1] = vup[1];
-	m[2][1] = vup[2];
+	rot[0][0] = i_i_ia + cos_a;
+	rot[0][1] = i_j_ia - c_sin;
+	rot[0][2] = i_k_ia + b_sin;
+	rot[1][0] = i_j_ia + c_sin;
+	rot[1][1] = j_j_ia + cos_a;
+	rot[1][2] = j_k_ia - a_sin;
+	rot[2][0] = i_k_ia - b_sin;
+	rot[2][1] = j_k_ia + a_sin;
+	rot[2][2] = k_k_ia + cos_a;
 
-	m[0][2] = vf[0];
-	m[1][2] = vf[1];
-	m[2][2] = vf[2];
-
-	memcpy( im, m, sizeof( im ) );
-
-	im[0][1] = m[1][0];
-	im[0][2] = m[2][0];
-	im[1][0] = m[0][1];
-	im[1][2] = m[2][1];
-	im[2][0] = m[0][2];
-	im[2][1] = m[1][2];
-
-	memset( zrot, 0, sizeof( zrot ) );
-	zrot[0][0] = zrot[1][1] = zrot[2][2] = 1.0F;
-
-	rad = DEG2RAD( degrees );
-	zrot[0][0] = cos( rad );
-	zrot[0][1] = sin( rad );
-	zrot[1][0] = -sin( rad );
-	zrot[1][1] = cos( rad );
-
-	MatrixMultiply( m, zrot, tmpmat );
-	MatrixMultiply( tmpmat, im, rot );
-
-	for ( i = 0; i < 3; i++ ) {
-		dst[i] = rot[i][0] * point[0] + rot[i][1] * point[1] + rot[i][2] * point[2];
-	}
+	dst[0] = point[0] * rot[0][0] + point[1] * rot[0][1] + point[2] * rot[0][2];
+	dst[1] = point[0] * rot[1][0] + point[1] * rot[1][1] + point[2] * rot[1][2];
+	dst[2] = point[0] * rot[2][0] + point[1] * rot[2][1] + point[2] * rot[2][2];
 }
 
 /*
@@ -349,20 +340,25 @@ void RotatePointAroundVector( vec3_t dst, const vec3_t dir, const vec3_t point,
 RotateAroundDirection
 ===============
 */
-void RotateAroundDirection( vec3_t axis[3], float yaw ) {
+void RotateAroundDirection( vec3_t axis[3], vec_t angle ) {
+	vec_t scale;
+
+	angle = DEG2RAD( angle );
 
 	// create an arbitrary axis[1] 
 	PerpendicularVector( axis[1], axis[0] );
 
-	// rotate it around axis[0] by yaw
-	if ( yaw ) {
-		vec3_t	temp;
-
-		VectorCopy( axis[1], temp );
-		RotatePointAroundVector( axis[1], axis[0], temp, yaw );
-	}
-
 	// cross to get axis[2]
+	CrossProduct( axis[ 0 ], axis[ 1 ], axis[ 2 ] );
+
+	// rotate
+	scale = cos( angle );
+	VectorScale( axis[ 1 ], scale, axis[ 1 ] );
+
+	scale = sin( angle );
+	VectorMA( axis[ 1 ], scale, axis[ 2 ], axis[ 1 ] );
+
+	// recalculate axis[2]
 	CrossProduct( axis[0], axis[1], axis[2] );
 }
 
@@ -410,6 +406,58 @@ void vectoangles( const vec3_t value1, vec3_t angles ) {
 
 /*
 =================
+AxisToAngles
+
+Takes an axis (forward + right + up)
+and returns angles -- including a roll
+=================
+*/
+void AxisToAngles( vec3_t axis[3], vec3_t angles ) {
+	float length1;
+	float yaw, pitch, roll = 0.0f;
+
+	if ( axis[0][1] == 0 && axis[0][0] == 0 ) {
+		yaw = 0;
+		if ( axis[0][2] > 0 ) {
+			pitch = 90;
+		}
+		else {
+			pitch = 270;
+		}
+	}
+	else {
+		if ( axis[0][0] ) {
+			yaw = ( atan2 ( axis[0][1], axis[0][0] ) * 180 / M_PI );
+		}
+		else if ( axis[0][1] > 0 ) {
+			yaw = 90;
+		}
+		else {
+			yaw = 270;
+		}
+		if ( yaw < 0 ) {
+			yaw += 360;
+		}
+
+		length1 = sqrt ( axis[0][0]*axis[0][0] + axis[0][1]*axis[0][1] );
+		pitch = ( atan2(axis[0][2], length1) * 180 / M_PI );
+		if ( pitch < 0 ) {
+			pitch += 360;
+		}
+
+		roll = ( atan2( axis[1][2], axis[2][2] ) * 180 / M_PI );
+		if ( roll < 0 ) {
+			roll += 360;
+		}
+	}
+
+	angles[PITCH] = -pitch;
+	angles[YAW] = yaw;
+	angles[ROLL] = roll;
+}
+
+/*
+=================
 AnglesToAxis
 =================
 */
@@ -445,7 +493,7 @@ void ProjectPointOnPlane( vec3_t dst, const vec3_t p, const vec3_t normal )
 	vec3_t n;
 	float inv_denom;
 
-	inv_denom =  DotProduct( normal, normal );
+	inv_denom = 1.0f / DotProduct( normal, normal );
 #ifndef Q3_VM
 	assert( Q_fabs(inv_denom) != 0.0f ); // zero vectors get here
 #endif
@@ -923,6 +971,18 @@ void MatrixMultiply(float in1[3][3], float in2[3][3], float out[3][3]) {
 				in1[2][2] * in2[2][2];
 }
 
+/*
+================
+VectorMatrixMultiply
+================
+*/
+void VectorMatrixMultiply( const vec3_t p, vec3_t m[ 3 ], vec3_t out )
+{
+	out[ 0 ] = m[ 0 ][ 0 ] * p[ 0 ] + m[ 1 ][ 0 ] * p[ 1 ] + m[ 2 ][ 0 ] * p[ 2 ];
+	out[ 1 ] = m[ 0 ][ 1 ] * p[ 0 ] + m[ 1 ][ 1 ] * p[ 1 ] + m[ 2 ][ 1 ] * p[ 2 ];
+	out[ 2 ] = m[ 0 ][ 2 ] * p[ 0 ] + m[ 1 ][ 2 ] * p[ 1 ] + m[ 2 ][ 2 ] * p[ 2 ];
+}
+
 
 void AngleVectors( const vec3_t angles, vec3_t forward, vec3_t right, vec3_t up) {
 	float		angle;
@@ -995,7 +1055,233 @@ void PerpendicularVector( vec3_t dst, const vec3_t src )
 }
 
 /*
+=================
+pointToLineDistance
+
+Distance from a point to some line
+=================
+*/
+float pointToLineDistance( const vec3_t p0, const vec3_t p1, const vec3_t p2 )
+{
+	vec3_t	v, w, y;
+	float	 c1, c2;
+
+	VectorSubtract( p2, p1, v );
+	VectorSubtract( p1, p0, w );
+
+	CrossProduct( w, v, y );
+	c1 = VectorLength( y );
+	c2 = VectorLength( v );
+
+	if( c2 == 0.0f )
+		return 0.0f;
+	else
+		return c1 / c2;
+}
+
+/*
+=================
+GetPerpendicularViewVector
+
+Used to find an "up" vector for drawing a sprite so that it always faces the view as best as possible
+=================
+*/
+void GetPerpendicularViewVector( const vec3_t point, const vec3_t p1, const vec3_t p2, vec3_t up )
+{
+	vec3_t	v1, v2;
+
+	VectorSubtract( point, p1, v1 );
+	VectorNormalize( v1 );
+
+	VectorSubtract( point, p2, v2 );
+	VectorNormalize( v2 );
+
+	CrossProduct( v1, v2, up );
+	VectorNormalize( up );
+}
+
+/*
 ================
+ProjectPointOntoVector
+================
+*/
+void ProjectPointOntoVector( vec3_t point, vec3_t vStart, vec3_t vEnd, vec3_t vProj )
+{
+	vec3_t pVec, vec;
+
+	VectorSubtract( point, vStart, pVec );
+	VectorSubtract( vEnd, vStart, vec );
+	VectorNormalize( vec );
+	// project onto the directional vector for this segment
+	VectorMA( vStart, DotProduct( pVec, vec ), vec, vProj );
+}
+
+/*
+================
+VectorMaxComponent
+
+Return the biggest component of some vector
+================
+*/
+float VectorMaxComponent( vec3_t v )
+{
+	float biggest = v[ 0 ];
+
+	if( v[ 1 ] > biggest )
+		biggest = v[ 1 ];
+
+	if( v[ 2 ] > biggest )
+		biggest = v[ 2 ];
+
+	return biggest;
+}
+
+/*
+================
+VectorMinComponent
+
+Return the smallest component of some vector
+================
+*/
+float VectorMinComponent( vec3_t v )
+{
+	float smallest = v[ 0 ];
+
+	if( v[ 1 ] < smallest )
+		smallest = v[ 1 ];
+
+	if( v[ 2 ] < smallest )
+		smallest = v[ 2 ];
+
+	return smallest;
+}
+
+
+#define LINE_DISTANCE_EPSILON 1e-05f
+
+/*
+================
+DistanceBetweenLineSegmentsSquared
+
+Return the smallest distance between two line segments, squared
+================
+*/
+vec_t DistanceBetweenLineSegmentsSquared(
+    const vec3_t sP0, const vec3_t sP1,
+    const vec3_t tP0, const vec3_t tP1,
+    float *s, float *t )
+{
+  vec3_t  sMag, tMag, diff;
+  float   a, b, c, d, e;
+  float   D;
+  float   sN, sD;
+  float   tN, tD;
+  vec3_t  separation;
+
+  VectorSubtract( sP1, sP0, sMag );
+  VectorSubtract( tP1, tP0, tMag );
+  VectorSubtract( sP0, tP0, diff );
+  a = DotProduct( sMag, sMag );
+  b = DotProduct( sMag, tMag );
+  c = DotProduct( tMag, tMag );
+  d = DotProduct( sMag, diff );
+  e = DotProduct( tMag, diff );
+  sD = tD = D = a * c - b * b;
+
+  if( D < LINE_DISTANCE_EPSILON )
+  {
+    // the lines are almost parallel
+    sN = 0.0;   // force using point P0 on segment S1
+    sD = 1.0;   // to prevent possible division by 0.0 later
+    tN = e;
+    tD = c;
+  }
+  else
+  {
+    // get the closest points on the infinite lines
+    sN = ( b * e - c * d );
+    tN = ( a * e - b * d );
+
+    if( sN < 0.0 )
+    {
+      // sN < 0 => the s=0 edge is visible
+      sN = 0.0;
+      tN = e;
+      tD = c;
+    }
+    else if( sN > sD )
+    {
+      // sN > sD => the s=1 edge is visible
+      sN = sD;
+      tN = e + b;
+      tD = c;
+    }
+  }
+
+  if( tN < 0.0 )
+  {
+    // tN < 0 => the t=0 edge is visible
+    tN = 0.0;
+
+    // recompute sN for this edge
+    if( -d < 0.0 )
+      sN = 0.0;
+    else if( -d > a )
+      sN = sD;
+    else
+    {
+      sN = -d;
+      sD = a;
+    }
+  }
+  else if( tN > tD )
+  {
+    // tN > tD => the t=1 edge is visible
+    tN = tD;
+
+    // recompute sN for this edge
+    if( ( -d + b ) < 0.0 )
+      sN = 0;
+    else if( ( -d + b ) > a )
+      sN = sD;
+    else
+    {
+      sN = ( -d + b );
+      sD = a;
+    }
+  }
+
+  // finally do the division to get *s and *t
+  *s = ( fabs( sN ) < LINE_DISTANCE_EPSILON ? 0.0 : sN / sD );
+  *t = ( fabs( tN ) < LINE_DISTANCE_EPSILON ? 0.0 : tN / tD );
+
+  // get the difference of the two closest points
+  VectorScale( sMag, *s, sMag );
+  VectorScale( tMag, *t, tMag );
+  VectorAdd( diff, sMag, separation );
+  VectorSubtract( separation, tMag, separation );
+
+  return VectorLengthSquared( separation );
+}
+
+/*
+================
+DistanceBetweenLineSegments
+
+Return the smallest distance between two line segments
+================
+*/
+vec_t DistanceBetweenLineSegments(
+    const vec3_t sP0, const vec3_t sP1,
+    const vec3_t tP0, const vec3_t tP1,
+    float *s, float *t )
+{
+  return (vec_t)sqrt( DistanceBetweenLineSegmentsSquared(
+        sP0, sP1, tP0, tP1, s, t ) );
+}
+
+/*
+=================
 Q_isnan
 
 Don't pass doubles to this

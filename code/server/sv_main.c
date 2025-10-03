@@ -54,7 +54,6 @@ cvar_t	*sv_maxRate;
 cvar_t	*sv_dlRate;
 cvar_t	*sv_minPing;
 cvar_t	*sv_maxPing;
-cvar_t	*sv_gametype;
 cvar_t	*sv_pure;
 cvar_t	*sv_floodProtect;
 cvar_t	*sv_lanForceRate; // dedicated 1 (LAN) server forces local client rates to 99999 (bug #491)
@@ -540,11 +539,6 @@ static void SVC_Status( netadr_t from ) {
 	int		playerLength;
 	char	infostring[MAX_INFO_STRING];
 
-	// ignore if we are in single player
-	if ( Cvar_VariableValue( "g_gametype" ) == GT_SINGLE_PLAYER || Cvar_VariableValue("ui_singlePlayerActive")) {
-		return;
-	}
-
 	// Prevent using getstatus as an amplifier
 	if ( SVC_RateLimitAddress( from, 10, 1000 ) ) {
 		Com_DPrintf( "SVC_Status: rate limit from %s exceeded, dropping request\n",
@@ -603,11 +597,6 @@ void SVC_Info( netadr_t from ) {
 	char	*gamedir;
 	char	infostring[MAX_INFO_STRING];
 
-	// ignore if we are in single player
-	if ( Cvar_VariableValue( "g_gametype" ) == GT_SINGLE_PLAYER || Cvar_VariableValue("ui_singlePlayerActive")) {
-		return;
-	}
-
 	// Prevent using getinfo as an amplifier
 	if ( SVC_RateLimitAddress( from, 10, 1000 ) ) {
 		Com_DPrintf( "SVC_Info: rate limit from %s exceeded, dropping request\n",
@@ -660,12 +649,9 @@ void SVC_Info( netadr_t from ) {
 	Info_SetValueForKey( infostring, "hostname", sv_hostname->string );
 	Info_SetValueForKey( infostring, "mapname", sv_mapname->string );
 	Info_SetValueForKey( infostring, "clients", va("%i", count) );
-	Info_SetValueForKey(infostring, "g_humanplayers", va("%i", humans));
 	Info_SetValueForKey( infostring, "sv_maxclients", 
 		va("%i", sv_maxclients->integer - sv_privateClients->integer ) );
-	Info_SetValueForKey( infostring, "gametype", va("%i", sv_gametype->integer ) );
 	Info_SetValueForKey( infostring, "pure", va("%i", sv_pure->integer ) );
-	Info_SetValueForKey(infostring, "g_needpass", va("%d", Cvar_VariableIntegerValue("g_needpass")));
 
 #ifdef USE_VOIP
 	if (sv_voipProtocol->string && *sv_voipProtocol->string) {
