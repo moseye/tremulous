@@ -244,7 +244,7 @@ PROTOCOL
 ==============================================================
 */
 
-#define	PROTOCOL_VERSION	71
+#define	PROTOCOL_VERSION	72
 #define PROTOCOL_LEGACY_VERSION	68
 // 1.31 - 67
 
@@ -269,9 +269,8 @@ extern int demo_protocols[];
   #endif
 #endif
 
-#define	PORT_MASTER			27950
-#define	PORT_UPDATE			27951
-#define	PORT_SERVER			27960
+#define	PORT_MASTER			30710
+#define	PORT_SERVER			30720
 #define	NUM_SERVER_PORTS	4		// broadcast scan this many ports after
 									// PORT_SERVER so a single machine can
 									// run multiple servers
