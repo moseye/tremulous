@@ -1,21 +1,21 @@
-set(PROJECT_NAME ioq3)
-set(PROJECT_VERSION 1.36)
+set(PROJECT_NAME Tremulous)
+set(PROJECT_VERSION 1.2.0)
 
-set(SERVER_NAME ioq3ded)
-set(CLIENT_NAME ioquake3)
+set(SERVER_NAME tremded)
+set(CLIENT_NAME tremulous)
 
-set(BASEGAME baseq3)
+set(BASEGAME base)
 
 set(CGAME_MODULE cgame)
-set(GAME_MODULE qagame)
+set(GAME_MODULE game)
 set(UI_MODULE ui)
 
-set(WINDOWS_ICON_PATH ${CMAKE_SOURCE_DIR}/misc/quake3.ico)
+set(WINDOWS_ICON_PATH ${CMAKE_SOURCE_DIR}/misc/tremulous.ico)
 
-set(MACOS_ICON_PATH ${CMAKE_SOURCE_DIR}/misc/quake3_flat.icns)
-set(MACOS_BUNDLE_ID org.ioquake.${CLIENT_NAME})
+set(MACOS_ICON_PATH ${CMAKE_SOURCE_DIR}/misc/tremulous.icns)
+set(MACOS_BUNDLE_ID net.tremulous.${CLIENT_NAME})
 
-set(COPYRIGHT "QUAKE III ARENA Copyright © 1999-2000 id Software, Inc. All rights reserved.")
+set(COPYRIGHT "© Darklegion Development 2005-2025")
 
-set(CONTACT_EMAIL "info@ioquake.org")
-set(PROTOCOL_HANDLER_SCHEME quake3)
+set(CONTACT_EMAIL "tim@ngus.net")
+set(PROTOCOL_HANDLER_SCHEME tremulous)
