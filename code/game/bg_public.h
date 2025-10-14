@@ -37,7 +37,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define MINS_Z                  -24
 #define DEFAULT_VIEWHEIGHT      26
 #define CROUCH_VIEWHEIGHT       12
-#define DEAD_VIEWHEIGHT         -14 //TA: watch for mins[ 2 ] less than this causing
+#define DEAD_VIEWHEIGHT         -14 // watch for mins[ 2 ] less than this causing
 
 #define	MAX_GAME_SHADERS						64
 #define	MAX_GAME_PARTICLE_SYSTEMS		64
@@ -70,9 +70,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define CS_WINNER           23    // string indicating round winner
 #define CS_SHADERSTATE      24
 #define CS_BOTINFO          25
-#define CS_CLIENTS_READY    26    //TA: following suggestion in STAT_ enum STAT_CLIENTS_READY becomes a configstring
+#define CS_CLIENTS_READY    26
 
-//TA: extra stuff:
 #define CS_BUILDPOINTS      28
 #define CS_STAGES           29
 #define CS_SPAWNS           30
@@ -142,12 +141,12 @@ typedef enum
 #define PMF_TIME_WATERJUMP  256     // pm_time is waterjump
 #define PMF_RESPAWNED       512     // clear after attack and jump buttons come up
 #define PMF_USE_ITEM_HELD   1024
-#define PMF_WEAPON_RELOAD   2048    //TA: force a weapon switch
+#define PMF_WEAPON_RELOAD   2048    // force a weapon switch
 #define PMF_FOLLOW          4096    // spectate following another player
-#define PMF_QUEUED          8192    //TA: player is queued
-#define PMF_TIME_WALLJUMP   16384   //TA: for limiting wall jumping
-#define PMF_CHARGE          32768   //TA: keep track of pouncing
-#define PMF_WEAPON_SWITCH   65536   //TA: force a weapon switch
+#define PMF_QUEUED          8192    // player is queued
+#define PMF_TIME_WALLJUMP   16384   // for limiting wall jumping
+#define PMF_CHARGE          32768   // keep track of pouncing
+#define PMF_WEAPON_SWITCH   65536   // force a weapon switch
 
 
 #define PMF_ALL_TIMES (PMF_TIME_WATERJUMP|PMF_TIME_LAND|PMF_TIME_KNOCKBACK|PMF_TIME_WALLJUMP)
@@ -209,19 +208,19 @@ typedef enum
 {
   STAT_HEALTH,
   STAT_ITEMS,
-  STAT_SLOTS,           //TA: tracks the amount of stuff human players are carrying
+  STAT_SLOTS,           // tracks the amount of stuff human players are carrying
   STAT_ACTIVEITEMS,
   STAT_WEAPONS,         // 16 bit fields
-  STAT_WEAPONS2,        //TA: another 16 bits to push the max weapon count up
+  STAT_WEAPONS2,        // another 16 bits to push the max weapon count up
   STAT_MAX_HEALTH, // health / armor limit, changable by handicap
-  STAT_PCLASS,    //TA: player class (for aliens AND humans)
-  STAT_PTEAM,     //TA: player team
-  STAT_STAMINA,   //TA: stamina (human only)
-  STAT_STATE,     //TA: client states e.g. wall climbing
-  STAT_MISC,      //TA: for uh...misc stuff
-  STAT_BUILDABLE, //TA: which ghost model to display for building
-  STAT_FALLDIST,  //TA: the distance the player fell
-  STAT_VIEWLOCK   //TA: direction to lock the view in
+  STAT_PCLASS,    // player class (for aliens AND humans)
+  STAT_PTEAM,     // player team
+  STAT_STAMINA,   // stamina (human only)
+  STAT_STATE,     // client states e.g. wall climbing
+  STAT_MISC,      // for uh...misc stuff
+  STAT_BUILDABLE, // which ghost model to display for building
+  STAT_FALLDIST,  // the distance the player fell
+  STAT_VIEWLOCK   // direction to lock the view in
 } statIndex_t;
 
 #define SCA_WALLCLIMBER         0x00000001
@@ -265,7 +264,6 @@ typedef enum
   PERS_ATTACKER,        // clientnum of last damage inflicter
   PERS_KILLED,          // count of the number of times you died
 
-  //TA:
   PERS_STATE,
   PERS_CREDIT,    // human credit
   PERS_BANK,      // human credit in the bank
@@ -406,7 +404,7 @@ typedef enum
   WUT_NUM_TEAMS
 } WUTeam_t;
 
-//TA: bitmasks for upgrade slots
+// bitmasks for upgrade slots
 #define SLOT_NONE       0x00000000
 #define SLOT_HEAD       0x00000001
 #define SLOT_TORSO      0x00000002
@@ -523,7 +521,7 @@ typedef enum
   EV_FIRE_WEAPON2,
   EV_FIRE_WEAPON3,
 
-  EV_PLAYER_RESPAWN, //TA: for fovwarp effects
+  EV_PLAYER_RESPAWN, // for fovwarp effects
   EV_PLAYER_TELEPORT_IN,
   EV_PLAYER_TELEPORT_OUT,
 
@@ -555,11 +553,11 @@ typedef enum
 
   EV_GIB_PLAYER,      // gib a previously living player
 
-  EV_BUILD_CONSTRUCT, //TA
-  EV_BUILD_DESTROY,   //TA
-  EV_BUILD_DELAY,     //TA: can't build yet
-  EV_BUILD_REPAIR,    //TA: repairing buildable
-  EV_BUILD_REPAIRED,  //TA: buildable has full health
+  EV_BUILD_CONSTRUCT,
+  EV_BUILD_DESTROY,
+  EV_BUILD_DELAY,     // can't build yet
+  EV_BUILD_REPAIR,    // repairing buildable
+  EV_BUILD_REPAIRED,  // buildable has full health
   EV_HUMAN_BUILDABLE_EXPLOSION,
   EV_ALIEN_BUILDABLE_EXPLOSION,
   EV_ALIEN_ACIDTUBE,
@@ -573,13 +571,13 @@ typedef enum
   EV_STOPLOOPINGSOUND,
   EV_TAUNT,
 
-  EV_OVERMIND_ATTACK, //TA: overmind under attack
-  EV_OVERMIND_DYING,  //TA: overmind close to death
-  EV_OVERMIND_SPAWNS, //TA: overmind needs spawns
+  EV_OVERMIND_ATTACK, // overmind under attack
+  EV_OVERMIND_DYING,  // overmind close to death
+  EV_OVERMIND_SPAWNS, // overmind needs spawns
 
-  EV_DCC_ATTACK,      //TA: dcc under attack
+  EV_DCC_ATTACK,      // dcc under attack
 
-  EV_RPTUSE_SOUND     //TA: trigger a sound
+  EV_RPTUSE_SOUND     // trigger a sound
 } entity_event_t;
 
 typedef enum
@@ -741,7 +739,7 @@ typedef enum
   MAX_NONSEG_PLAYER_TOTALANIMATIONS
 } nonSegPlayerAnimNumber_t;
 
-//TA: for buildable animations
+// for buildable animations
 typedef enum
 {
   BANIM_NONE,
@@ -801,7 +799,7 @@ typedef enum
 // How many players on the overlay
 #define TEAM_MAXOVERLAY   32
 
-//TA: player classes
+// player classes
 typedef enum
 {
   PCL_NONE,
@@ -828,7 +826,7 @@ typedef enum
 } pClass_t;
 
 
-//TA: player teams
+// player teams
 typedef enum
 {
   PTE_NONE,
@@ -895,7 +893,7 @@ typedef enum
 
 //---------------------------------------------------------
 
-//TA: player class record
+// player class record
 typedef struct
 {
   int       classNum;
@@ -979,7 +977,7 @@ typedef enum
 
 #define MAX_BUILDABLE_MODELS 4
 
-//TA: buildable item record
+// buildable item record
 typedef struct
 {
   int       buildNum;
@@ -1043,7 +1041,7 @@ typedef struct
   float     zOffset;
 } buildableAttributeOverrides_t;
 
-//TA: weapon record
+// weapon record
 typedef struct
 {
   int       weaponNum;
@@ -1081,7 +1079,7 @@ typedef struct
   WUTeam_t  team;
 } weaponAttributes_t;
 
-//TA: upgrade record
+// upgrade record
 typedef struct
 {
   int       upgradeNum;
@@ -1102,8 +1100,6 @@ typedef struct
   WUTeam_t  team;
 } upgradeAttributes_t;
 
-
-//TA:
 void      BG_UnpackAmmoArray( int weapon, int psAmmo[ ], int psAmmo2[ ], int *ammo, int *clips );
 void      BG_PackAmmoArray( int weapon, int psAmmo[ ], int psAmmo2[ ], int ammo, int clips );
 qboolean  BG_WeaponIsFull( weapon_t weapon, int stats[ ], int psAmmo[ ], int psAmmo2[ ] );
@@ -1252,7 +1248,7 @@ typedef enum
   ET_PLAYER,
   ET_ITEM,
 
-  ET_BUILDABLE,       //TA: buildable type
+  ET_BUILDABLE,       // buildable type
 
   ET_MISSILE,
   ET_MOVER,
