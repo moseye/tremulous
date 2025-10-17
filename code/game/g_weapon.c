@@ -367,24 +367,24 @@ void ShotgunPattern( vec3_t origin, vec3_t origin2, int seed, gentity_t *ent )
   int        i;
   float      r, u;
   vec3_t    end;
-  vec3_t    forward, right, up;
+  vec3_t    localForward, localRight, localUp;
   trace_t    tr;
   gentity_t  *traceEnt;
 
   // derive the right and up vectors from the forward vector, because
   // the client won't have any other information
-  VectorNormalize2( origin2, forward );
-  PerpendicularVector( right, forward );
-  CrossProduct( forward, right, up );
+  VectorNormalize2( origin2, localForward );
+  PerpendicularVector( localRight, localForward );
+  CrossProduct( localForward, localRight, localUp );
 
   // generate the "random" spread pattern
   for( i = 0; i < SHOTGUN_PELLETS; i++ )
   {
     r = Q_crandom( &seed ) * SHOTGUN_SPREAD * 16;
     u = Q_crandom( &seed ) * SHOTGUN_SPREAD * 16;
-    VectorMA( origin, SHOTGUN_RANGE, forward, end );
-    VectorMA( end, r, right, end );
-    VectorMA( end, u, up, end );
+    VectorMA( origin, SHOTGUN_RANGE, localForward, end );
+    VectorMA( end, r, localRight, end );
+    VectorMA( end, u, localUp, end );
 
     trap_Trace( &tr, origin, NULL, NULL, end, ent->s.number, MASK_SHOT );
     traceEnt = &g_entities[ tr.entityNum ];
@@ -393,7 +393,7 @@ void ShotgunPattern( vec3_t origin, vec3_t origin2, int seed, gentity_t *ent )
     if( !( tr.surfaceFlags & SURF_NOIMPACT ) )
     {
       if( traceEnt->takedamage )
-        G_Damage( traceEnt, ent, ent, forward, tr.endpos,  SHOTGUN_DMG, 0, MOD_SHOTGUN );
+        G_Damage( traceEnt, ent, ent, localForward, tr.endpos,  SHOTGUN_DMG, 0, MOD_SHOTGUN );
     }
   }
 }
@@ -734,7 +734,7 @@ BUILD GUN
 */
 void CheckCkitRepair( gentity_t *ent )
 {
-  vec3_t      viewOrigin, forward, end;
+  vec3_t      viewOrigin, localForward, end;
   trace_t     tr;
   gentity_t   *traceEnt;
   int         bHealth;
@@ -744,8 +744,8 @@ void CheckCkitRepair( gentity_t *ent )
     return;
 
   BG_GetClientViewOrigin( &ent->client->ps, viewOrigin );
-  AngleVectors( ent->client->ps.viewangles, forward, NULL, NULL );
-  VectorMA( viewOrigin, 100, forward, end );
+  AngleVectors( ent->client->ps.viewangles, localForward, NULL, NULL );
+  VectorMA( viewOrigin, 100, localForward, end );
 
   trap_Trace( &tr, viewOrigin, NULL, NULL, end, ent->s.number, MASK_PLAYERSOLID );
   traceEnt = &g_entities[ tr.entityNum ];
@@ -1321,15 +1321,15 @@ void G_ChargeAttack( gentity_t *ent, gentity_t *victim )
 {
   int       damage;
   int       i;
-  vec3_t    forward;
+  vec3_t    localForward;
 
   if( ent->client->ps.stats[ STAT_MISC ] <= 0 ||
       !( ent->client->ps.stats[ STAT_STATE ] & SS_CHARGING ) ||
       ent->client->ps.weaponTime )
     return;
 
-  VectorSubtract( victim->s.origin, ent->s.origin, forward );
-  VectorNormalize( forward );
+  VectorSubtract( victim->s.origin, ent->s.origin, localForward );
+  VectorNormalize( localForward );
 
   if( !victim->takedamage )
     return;
@@ -1355,7 +1355,7 @@ void G_ChargeAttack( gentity_t *ent, gentity_t *victim )
   damage = LEVEL4_TRAMPLE_DMG * ent->client->ps.stats[ STAT_MISC ] /
            LEVEL4_TRAMPLE_DURATION;
 
-  G_Damage( victim, ent, ent, forward, victim->s.origin, damage,
+  G_Damage( victim, ent, ent, localForward, victim->s.origin, damage,
             DAMAGE_NO_LOCDAMAGE, MOD_LEVEL4_TRAMPLE );
 
   ent->client->ps.weaponTime += LEVEL4_TRAMPLE_REPEAT;
@@ -1415,14 +1415,14 @@ CalcMuzzlePoint
 set muzzle location relative to pivoting eye
 ===============
 */
-void CalcMuzzlePoint( gentity_t *ent, vec3_t forward, vec3_t right, vec3_t up, vec3_t muzzlePoint )
+void CalcMuzzlePoint( gentity_t *ent, vec3_t localForward, vec3_t localRight, vec3_t localUp, vec3_t muzzlePoint )
 {
   vec3_t normal;
 
   VectorCopy( ent->client->ps.origin, muzzlePoint );
   BG_GetClientNormal( &ent->client->ps, normal );
   VectorMA( muzzlePoint, ent->client->ps.viewheight, normal, muzzlePoint );
-  VectorMA( muzzlePoint, 1, forward, muzzlePoint );
+  VectorMA( muzzlePoint, 1, localForward, muzzlePoint );
   // snap to integer coordinates for more efficient network bandwidth usage
   SnapVector( muzzlePoint );
 }

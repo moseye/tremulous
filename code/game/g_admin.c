@@ -293,12 +293,12 @@ g_admin_cmd_t *G_admin_cmd( const char *cmd )
 
 g_admin_level_t *G_admin_level( const int l )
 {
-  g_admin_level_t *level;
+  g_admin_level_t *adminLevel;
 
-  for( level = g_admin_levels; level; level = level->next )
+  for( adminLevel = g_admin_levels; adminLevel; adminLevel = adminLevel->next )
   {
-    if( level->level == l )
-      return level;
+    if( adminLevel->level == l )
+      return adminLevel;
   }
 
   return NULL;
@@ -615,38 +615,38 @@ static void admin_readconfig_int( char **cnf, int *v )
 static void admin_default_levels( void )
 {
   g_admin_level_t *l;
-  int             level = 0;
+  int             adminLevel = 0;
 
   l = g_admin_levels = BG_Alloc( sizeof( g_admin_level_t ) );
-  l->level = level++;
+  l->level = adminLevel++;
   Q_strncpyz( l->name, "^4Unknown Player", sizeof( l->name ) );
   Q_strncpyz( l->flags,
     "listplayers admintest adminhelp time",
     sizeof( l->flags ) );
 
   l = l->next = BG_Alloc( sizeof( g_admin_level_t ) );
-  l->level = level++;
+  l->level = adminLevel++;
   Q_strncpyz( l->name, "^5Server Regular", sizeof( l->name ) );
   Q_strncpyz( l->flags,
     "listplayers admintest adminhelp time",
     sizeof( l->flags ) );
 
   l = l->next = BG_Alloc( sizeof( g_admin_level_t ) );
-  l->level = level++;
+  l->level = adminLevel++;
   Q_strncpyz( l->name, "^6Team Manager", sizeof( l->name ) );
   Q_strncpyz( l->flags,
     "listplayers admintest adminhelp time putteam spec999",
     sizeof( l->flags ) );
 
   l = l->next = BG_Alloc( sizeof( g_admin_level_t ) );
-  l->level = level++;
+  l->level = adminLevel++;
   Q_strncpyz( l->name, "^2Junior Admin", sizeof( l->name ) );
   Q_strncpyz( l->flags,
     "listplayers admintest adminhelp time putteam spec999 kick mute ADMINCHAT",
     sizeof( l->flags ) );
 
   l = l->next = BG_Alloc( sizeof( g_admin_level_t ) );
-  l->level = level++;
+  l->level = adminLevel++;
   Q_strncpyz( l->name, "^3Senior Admin", sizeof( l->name ) );
   Q_strncpyz( l->flags,
     "listplayers admintest adminhelp time putteam spec999 kick mute showbans ban "
@@ -654,7 +654,7 @@ static void admin_default_levels( void )
     sizeof( l->flags ) );
 
   l = l->next = BG_Alloc( sizeof( g_admin_level_t ) );
-  l->level = level++;
+  l->level = adminLevel++;
   Q_strncpyz( l->name, "^1Server Operator", sizeof( l->name ) );
   Q_strncpyz( l->flags,
     "ALLFLAGS -IMMUTABLE -INCOGNITO",
@@ -665,7 +665,7 @@ static void admin_default_levels( void )
 void G_admin_authlog( gentity_t *ent )
 {
   char            aflags[ MAX_ADMIN_FLAGS * 2 ];
-  g_admin_level_t *level;
+  g_admin_level_t *adminLevel;
   int             levelNum = 0;
 
   if( !ent )
@@ -674,11 +674,11 @@ void G_admin_authlog( gentity_t *ent )
   if( ent->client->pers.admin )
     levelNum = ent->client->pers.admin->level;
 
-  level = G_admin_level( levelNum );
+  adminLevel = G_admin_level( levelNum );
 
   Com_sprintf( aflags, sizeof( aflags ), "%s %s",
                ent->client->pers.admin->flags,
-               ( level ) ? level->flags : "" );
+               ( adminLevel ) ? adminLevel->flags : "" );
 
   G_LogPrintf( "AdminAuth: %i \"%s" S_COLOR_WHITE "\" \"%s" S_COLOR_WHITE
                "\" [%d] (%s): %s\n",

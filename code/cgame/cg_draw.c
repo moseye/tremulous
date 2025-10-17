@@ -683,15 +683,15 @@ static void CG_DrawPlayerAmmoValue( rectDef_t *rect, vec4_t color )
     len = strlen( text );
 
     if( len <= 4 )
-      scale = 0.50;
+      scale = 0.50f;
     else if( len <= 6 )
-      scale = 0.43;
+      scale = 0.43f;
     else if( len == 7 ) 
-      scale = 0.36; 
+      scale = 0.36f;
     else if( len == 8 )
-      scale = 0.33;
+      scale = 0.33f;
     else
-      scale = 0.31;
+      scale = 0.31f;
 
     CG_AlignText( rect, text, scale, 0.0f, 0.0f, ALIGN_RIGHT, VALIGN_CENTER, &tx, &ty );
     UI_Text_Paint( tx + 1, ty, scale, color, text, 0, 0, ITEM_TEXTSTYLE_NORMAL );
@@ -1299,7 +1299,7 @@ float CG_GetValue( int ownerDraw )
   return -1;
 }
 
-const char *CG_GetKillerText( )
+const char *CG_GetKillerText( void )
 {
   const char *s = "";
   if( cg.killerName[ 0 ] )
@@ -1935,19 +1935,19 @@ static void CG_DrawClock( rectDef_t *rect, float text_x, float text_y,
   else
   {
     char *pm = "am";
-    int h = qt.tm_hour;
+    int hour = qt.tm_hour;
 
-    if( h == 0 )
-      h = 12;
-    else if( h == 12 )
+    if( hour == 0 )
+      hour = 12;
+    else if( hour == 12 )
       pm = "pm";
-    else if( h > 12 )
+    else if( hour > 12 )
     {
-      h -= 12;
+      hour -= 12;
       pm = "pm";
     }
 
-    s = va( "%d%s%02d%s", h, ( qt.tm_sec % 2 ) ? ":" : " ", qt.tm_min, pm );
+    s = va( "%d%s%02d%s", hour, ( qt.tm_sec % 2 ) ? ":" : " ", qt.tm_min, pm );
   }
   w = UI_Text_Width( "0", scale );
   h = UI_Text_Height( "0", scale );

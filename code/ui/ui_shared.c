@@ -165,7 +165,7 @@ void UI_InitMemory( void )
   outOfMemory = qfalse;
 }
 
-qboolean UI_OutOfMemory( )
+qboolean UI_OutOfMemory( void )
 {
   return outOfMemory;
 }
@@ -1689,10 +1689,10 @@ void Menu_TransitionItemByName( menuDef_t *menu, const char *p, rectDef_t rectFr
       item->window.offsetTime = time;
       memcpy( &item->window.rectClient, &rectFrom, sizeof( rectDef_t ) );
       memcpy( &item->window.rectEffects, &rectTo, sizeof( rectDef_t ) );
-      item->window.rectEffects2.x = abs( rectTo.x - rectFrom.x ) / amt;
-      item->window.rectEffects2.y = abs( rectTo.y - rectFrom.y ) / amt;
-      item->window.rectEffects2.w = abs( rectTo.w - rectFrom.w ) / amt;
-      item->window.rectEffects2.h = abs( rectTo.h - rectFrom.h ) / amt;
+      item->window.rectEffects2.x = fabs( rectTo.x - rectFrom.x ) / amt;
+      item->window.rectEffects2.y = fabs( rectTo.y - rectFrom.y ) / amt;
+      item->window.rectEffects2.w = fabs( rectTo.w - rectFrom.w ) / amt;
+      item->window.rectEffects2.h = fabs( rectTo.h - rectFrom.h ) / amt;
       Item_UpdatePosition( item );
     }
   }
@@ -3170,7 +3170,7 @@ qboolean Item_Multi_HandleKey( itemDef_t *item, int key )
   {
     if( item->window.flags & WINDOW_HASFOCUS && item->cvar && max > 0 )
     {
-      int current;
+      int current = 0;
 
       if( ( mouseOver && key == K_MOUSE1 ) ||
           key == K_ENTER || key == K_RIGHTARROW || key == K_DOWNARROW )
@@ -4388,7 +4388,7 @@ const char *Item_Text_Wrap( const char *text, float scale, float width )
         char  *indentMarkerText       = va( "%f%c", indentWidth, INDENT_MARKER );
         int   indentMarkerTextLength  = strlen( indentMarkerText );
 
-        strncpy( paint, indentMarkerText, indentMarkerTextLength );
+        strncpy( paint, indentMarkerText, strlen( paint ) - indentMarkerTextLength - 1 );
         paint += indentMarkerTextLength;
         *paint = '\0';
       }
@@ -4644,11 +4644,11 @@ void Item_Text_Wrapped_Paint( itemDef_t *item )
 
         if( DC->getCVarValue( "ui_developer" ) )
         {
-          vec4_t color;
-          color[ 0 ] = color[ 2 ] = color[ 3 ] = 1.0f;
-          color[ 1 ] = 0.0f;
+          vec4_t debugColor;
+          debugColor[ 0 ] = debugColor[ 2 ] = debugColor[ 3 ] = 1.0f;
+          debugColor[ 1 ] = 0.0f;
           DC->drawRect( lineItem.window.rect.x, lineItem.window.rect.y,
-                        lineItem.window.rect.w, lineItem.window.rect.h, 1, color );
+                        lineItem.window.rect.w, lineItem.window.rect.h, 1, debugColor );
         }
 
         Item_SetTextExtents( &lineItem, buff );

@@ -736,7 +736,7 @@ void G_ShutdownGame( int restart )
 
 //===================================================================
 
-void QDECL Com_Error( int level, const char *error, ... )
+void QDECL Com_Error( int logLevel, const char *error, ... )
 {
   va_list argptr;
   char    text[ 1024 ];
@@ -1110,9 +1110,7 @@ Recalculate the quantity of building points available to the teams
 */
 void G_CalculateBuildPoints( void )
 {
-  int               i;
-  buildable_t       buildable;
-  buildPointZone_t  *zone;
+  int i;
 
   // BP queue updates
   while( level.alienBuildPointQueue > 0 &&
@@ -1217,7 +1215,8 @@ void G_CalculateBuildPoints( void )
   // note that this has to be done after the used BP is calculated
   for( i = MAX_CLIENTS; i < level.num_entities; i++ )
   {
-    gentity_t *ent = &g_entities[ i ];
+    gentity_t   *ent = &g_entities[ i ];
+    buildable_t buildable;
 
     if( ent->s.eType != ET_BUILDABLE || ent->s.eFlags & EF_DEAD ||
         ent->buildableTeam != TEAM_HUMANS )
@@ -1230,7 +1229,7 @@ void G_CalculateBuildPoints( void )
 
     if( ent->usesBuildPointZone && level.buildPointZones[ ent->buildPointZone ].active )
     {
-      zone = &level.buildPointZones[ ent->buildPointZone ];
+      buildPointZone_t *zone = &level.buildPointZones[ ent->buildPointZone ];
 
       if( G_TimeTilSuddenDeath( ) > 0 )
       {

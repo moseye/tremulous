@@ -92,7 +92,7 @@ static void CG_ClipMoveToEntities ( const vec3_t start, const vec3_t mins,
     int mask, trace_t *tr, traceType_t collisionType )
 {
   int           i, j, x, zd, zu;
-  trace_t       trace;
+  trace_t       trace = { 0 };
   entityState_t *ent;
   clipHandle_t  cmodel;
   vec3_t        bmins, bmaxs;
@@ -542,7 +542,7 @@ to ease the jerk.
 */
 void CG_PredictPlayerState( void )
 {
-  int     cmdNum, current, i;
+  int     cmdNum, current;
   playerState_t oldPlayerState;
   usercmd_t oldestCmd;
   usercmd_t latestCmd;
@@ -731,6 +731,8 @@ void CG_PredictPlayerState( void )
 
   for( cmdNum = current - CMD_BACKUP + 1; cmdNum <= current; cmdNum++ )
   {
+    int i;
+
     // get the command
     trap_GetUserCmd( cmdNum, &cg_pmove.cmd );
 

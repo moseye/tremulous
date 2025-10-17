@@ -283,12 +283,12 @@ static particle_t *CG_SpawnNewParticle( baseParticle_t *bp, particleEjector_t *p
       //this particle has a child particle system attached
       if( bp->childSystemName[ 0 ] != '\0' )
       {
-        particleSystem_t  *ps = CG_SpawnNewParticleSystem( bp->childSystemHandle );
+        particleSystem_t  *childPs = CG_SpawnNewParticleSystem( bp->childSystemHandle );
 
-        if( CG_IsParticleSystemValid( &ps ) )
+        if( CG_IsParticleSystemValid( &childPs ) )
         {
-          CG_SetAttachmentParticle( &ps->attachment, p );
-          CG_AttachToParticle( &ps->attachment );
+          CG_SetAttachmentParticle( &childPs->attachment, p );
+          CG_AttachToParticle( &childPs->attachment );
         }
       }
 

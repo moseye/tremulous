@@ -366,11 +366,11 @@ void player_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
 
   {
     // normal death
-    static int i;
+    static int lastDeath;
 
     if( !( self->client->ps.persistant[ PERS_STATE ] & PS_NONSEGMODEL ) )
     {
-      switch( i )
+      switch( lastDeath )
       {
         case 0:
           anim = BOTH_DEATH1;
@@ -386,7 +386,7 @@ void player_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
     }
     else
     {
-      switch( i )
+      switch( lastDeath )
       {
         case 0:
           anim = NSPA_DEATH1;
@@ -411,11 +411,11 @@ void player_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
     }
 
     // use own entityid if killed by non-client to prevent uint8_t overflow
-    G_AddEvent( self, EV_DEATH1 + i,
+    G_AddEvent( self, EV_DEATH1 + lastDeath,
       ( killer < MAX_CLIENTS ) ? killer : self - g_entities );
 
     // globally cycle through the different death animations
-    i = ( i + 1 ) % 3;
+    lastDeath = ( lastDeath + 1 ) % 3;
   }
 
   trap_LinkEntity( self );
@@ -1025,11 +1025,11 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker,
       if( g_dretchPunt.integer &&
           targ->client->ps.stats[ STAT_CLASS ] == PCL_ALIEN_LEVEL0 )
       {
-        vec3_t dir, push;
+        vec3_t puntDir, push;
 
-        VectorSubtract( targ->r.currentOrigin, attacker->r.currentOrigin, dir );
-        VectorNormalizeFast( dir );
-        VectorScale( dir, ( damage * 10.0f ), push );
+        VectorSubtract( targ->r.currentOrigin, attacker->r.currentOrigin, puntDir );
+        VectorNormalizeFast( puntDir );
+        VectorScale( puntDir, ( damage * 10.0f ), push );
         push[2] = 64.0f;
         VectorAdd( targ->client->ps.velocity, push, targ->client->ps.velocity );
         return;

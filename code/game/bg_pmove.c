@@ -1922,7 +1922,7 @@ static void PM_GroundClimbTrace( void )
   vec3_t      refNormal = { 0.0f, 0.0f, 1.0f };
   vec3_t      ceilingNormal = { 0.0f, 0.0f, -1.0f };
   vec3_t      toAngles, surfAngles;
-  trace_t     trace;
+  trace_t     trace = { 0 };
   int         i;
   const float eps = 0.000001f;
 

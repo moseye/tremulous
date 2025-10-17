@@ -471,7 +471,7 @@ Parse_ReadEscapeCharacter
 */
 static int Parse_ReadEscapeCharacter(script_t *script, char *ch)
 {
-  int c, val, i;
+  int c, val;
 
   //step over the leading '\\'
   script->script_p++;
@@ -492,7 +492,7 @@ static int Parse_ReadEscapeCharacter(script_t *script, char *ch)
     case 'x':
     {
       script->script_p++;
-      for (i = 0, val = 0; ; i++, script->script_p++)
+      for (val = 0; ; script->script_p++)
       {
         c = *script->script_p;
         if (c >= '0' && c <= '9') c = c - '0';
@@ -513,7 +513,7 @@ static int Parse_ReadEscapeCharacter(script_t *script, char *ch)
     default: //NOTE: decimal ASCII code, NOT octal
     {
       if (*script->script_p < '0' || *script->script_p > '9') Parse_ScriptError(script, "unknown escape char");
-      for (i = 0, val = 0; ; i++, script->script_p++)
+      for (val = 0; ; script->script_p++)
       {
         c = *script->script_p;
         if (c >= '0' && c <= '9') c = c - '0';
@@ -2518,7 +2518,7 @@ static int Parse_Directive_include(source_t *source)
 {
   script_t *script;
   token_t token;
-  char path[MAX_QPATH];
+  char path[MAX_TOKEN_CHARS];
 
   if (source->skip > 0) return qtrue;
   //
@@ -2555,7 +2555,7 @@ static int Parse_Directive_include(source_t *source)
         break;
       }
       if (token.type == TT_PUNCTUATION && *token.string == '>') break;
-      strncat(path, token.string, MAX_QPATH - 1);
+      strncat(path, token.string, sizeof(path) - strlen(path) - 1);
     }
     if (*token.string != '>')
     {
@@ -2765,7 +2765,7 @@ static int Parse_Directive_eval(source_t *source)
   token.whitespace_p = source->scriptstack->script_p;
   token.endwhitespace_p = source->scriptstack->script_p;
   token.linescrossed = 0;
-  sprintf(token.string, "%d", abs(value));
+  sprintf(token.string, "%ld", labs(value));
   token.type = TT_NUMBER;
   token.subtype = TT_INTEGER|TT_LONG|TT_DECIMAL;
   Parse_UnreadSourceToken(source, &token);
@@ -2812,7 +2812,7 @@ static int Parse_DollarDirective_evalint(source_t *source)
   token.whitespace_p = source->scriptstack->script_p;
   token.endwhitespace_p = source->scriptstack->script_p;
   token.linescrossed = 0;
-  sprintf(token.string, "%d", abs(value));
+  sprintf(token.string, "%ld", labs(value));
   token.type = TT_NUMBER;
   token.subtype = TT_INTEGER|TT_LONG|TT_DECIMAL;
   token.intvalue = value;
@@ -3570,7 +3570,7 @@ static source_t *Parse_LoadSourceFile(const char *filename)
   source = (source_t *) Z_Malloc(sizeof(source_t));
   Com_Memset(source, 0, sizeof(source_t));
 
-  strncpy(source->filename, filename, MAX_QPATH);
+  strncpy(source->filename, filename, sizeof(source->filename) - 1);
   source->scriptstack = script;
   source->tokens = NULL;
   source->defines = NULL;
