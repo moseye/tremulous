@@ -1868,7 +1868,7 @@ void CG_MissileHitEntity( weapon_t weaponNum, weaponMode_t weaponMode,
     }
     else
       sound = IMPACTSOUND_DEFAULT;
-          
+
     CG_MissileHitWall( weaponNum, weaponMode, 0, origin, dir, sound, charge );
   }
 }

@@ -1240,7 +1240,7 @@ void Info_RemoveKey( char *s, const char *key ) {
 		}
 		*o = 0;
 
-		if (!strcmp (key, pkey) )
+		if (!Q_stricmp (key, pkey) )
 		{
 			memmove(start, s, strlen(s) + 1); // remove this part
 			
@@ -1296,7 +1296,7 @@ void Info_RemoveKey_Big( char *s, const char *key ) {
 		}
 		*o = 0;
 
-		if (!strcmp (key, pkey) )
+		if (!Q_stricmp (key, pkey) )
 		{
 			memmove(start, s, strlen(s) + 1); // remove this part
 			return;

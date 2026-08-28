@@ -70,7 +70,7 @@ enum
   CS_VOTE_YES         = CS_VOTE_STRING + NUM_TEAMS,
   CS_VOTE_NO          = CS_VOTE_YES + NUM_TEAMS,
   CS_VOTE_CALLER      = CS_VOTE_NO + NUM_TEAMS,
-  
+
   CS_GAME_VERSION     = CS_VOTE_CALLER + NUM_TEAMS,
   CS_LEVEL_START_TIME,      // so the timer only shows the current level
   CS_INTERMISSION,          // when 1, fraglimit/timelimit has been hit and intermission will start in a second or two
@@ -1026,7 +1026,7 @@ typedef struct
   qboolean      dccTest;
   qboolean      transparentTest;
   qboolean      uniqueTest;
-  
+
   int       value;
 } buildableAttributes_t;
 

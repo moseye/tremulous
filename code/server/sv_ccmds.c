@@ -143,7 +143,7 @@ static void SV_MapRestart_f( void ) {
 	// map_restart has happened
 	svs.snapFlagServerBit ^= SNAPFLAG_SERVERCOUNT;
 
-	// generate a new serverid	
+	// generate a new serverid
 	// TTimo - don't update restartedserverId there, otherwise we won't deal correctly with multiple map_restart
 	sv.serverId = com_frameTime;
 	Cvar_Set( "sv_serverid", va("%i", sv.serverId ) );
@@ -207,7 +207,7 @@ static void SV_MapRestart_f( void ) {
 			// which is wrong obviously.
 			SV_ClientEnterWorld(client, NULL);
 		}
-	}	
+	}
 
 	// run another frame to allow things to look at all the players
 	VM_Call (gvm, GAME_RUN_FRAME, sv.time);
@@ -283,7 +283,7 @@ SV_CompleteMapName
 */
 static void SV_CompleteMapName( char *args, int argNum ) {
 	if( argNum == 2 ) {
-		Field_CompleteFilename( "maps", "bsp", qtrue, qfalse );
+		Field_CompleteFilename( "maps", "bsp", NULL, qtrue, qfalse );
 	}
 }
 

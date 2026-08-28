@@ -181,10 +181,10 @@ Sys_PIDFileName
 */
 static char *Sys_PIDFileName( const char *gamedir )
 {
-	const char *homePath = Cvar_VariableString( "fs_homepath" );
+	const char *homeStatePath = Cvar_VariableString( "fs_homestatepath" );
 
-	if( *homePath != '\0' )
-		return va( "%s/%s/%s", homePath, gamedir, PID_FILENAME );
+	if( *homeStatePath != '\0' )
+		return va( "%s/%s/%s", homeStatePath, gamedir, PID_FILENAME );
 
 	return NULL;
 }
@@ -790,8 +790,9 @@ int main( int argc, char **argv )
 	char *protocolCommand = NULL;
 #endif
 
-	extern void Sys_LaunchAutoupdater(int argc, char **argv);
+#ifdef USE_AUTOUPDATER
 	Sys_LaunchAutoupdater(argc, argv);
+#endif
 
 #ifndef DEDICATED
 	// SDL version check
@@ -822,6 +823,7 @@ int main( int argc, char **argv )
 #endif
 
 	Sys_PlatformInit( );
+	Sys_SetMaxFileLimit( );
 
 	// Set the initial time base
 	Sys_Milliseconds( );

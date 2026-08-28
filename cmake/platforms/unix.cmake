@@ -17,6 +17,6 @@ if(USE_HTTP)
 endif()
 
 list(APPEND COMMON_LIBRARIES
-    dl  # Dynamic loader
-    m   # Math library
+    ${CMAKE_DL_LIBS}    # Dynamic loader
+    m                   # Math library
 )
