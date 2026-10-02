@@ -592,6 +592,10 @@ Display an error message
 void Sys_ErrorDialog( const char *error )
 {
 	Sys_Print( va( "%s\n", error ) );
+	// Dedicated servers must terminate without an unattended modal dialog.
+	// Sys_Error still exits with status 3 after this diagnostic is logged.
+	if( com_dedicated && com_dedicated->integer )
+		return;
 
 	if( Sys_Dialog( DT_YES_NO, va( "%s. Copy console log to clipboard?", error ),
 			"Error" ) == DR_YES )

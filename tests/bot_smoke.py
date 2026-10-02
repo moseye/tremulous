@@ -156,7 +156,7 @@ def main():
         check(len(set(points)) > 12, 'bots move through real collision and player movement')
         nav = rcon('botnav status')
         rcon('botnav paths')
-        check(re.search(r'botnav: [1-9]\d*/4096 floor nodes, [1-9]\d* directed links', nav),
+        check(re.search(r'botnav: [1-9]\d*/[1-9]\d* floor nodes, [1-9]\d* directed links', nav),
               'collision navigation graph generates nodes and links')
         rcon('bot team 2 spectator')
         time.sleep(1)

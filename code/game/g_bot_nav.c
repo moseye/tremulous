@@ -12,7 +12,7 @@
 #include "g_local.h"
 #include "g_bot.h"
 
-#define BOT_NAV_NODES       4096
+#define BOT_NAV_NODES       8192
 #define BOT_NAV_LINKS       12
 #define BOT_NAV_PATH        192
 #define BOT_NAV_HAZARDS     128
@@ -20,6 +20,8 @@
 #define BOT_NAV_SPACING     64.0f
 #define BOT_NAV_MERGE       24.0f
 #define BOT_NAV_TRACES      160
+#define BOT_NAV_CLASS_TRACES 64
+#define BOT_NAV_ANCHOR_RETRIES 16
 #define BOT_NAV_MASK        ( CONTENTS_SOLID | CONTENTS_PLAYERCLIP )
 #define BOT_NAV_JUMP        1
 #define BOT_NAV_INFINITY    1.0e30f
@@ -31,29 +33,55 @@ typedef struct
   unsigned char flags[ BOT_NAV_LINKS ];
   int numLinks;
   int expanded;
+  /* Static collision only. Dynamic players/buildings are never cached. */
+  int classChecked, classPass;
+  int linkChecked[ BOT_NAV_LINKS ], linkPass[ BOT_NAV_LINKS ];
+  int linkJump[ BOT_NAV_LINKS ];
+  float classFootOffset[ PCL_NUM_CLASSES ];
 } botNavNode_t;
 
 typedef struct
 {
   int path[ BOT_NAV_PATH ];
   int length, cursor, nextPlan;
+  qboolean partial;
   int avoidNode, avoidUntil;
   int nextJump, lastCheck, blockedSince;
   int escapeUntil, escapeSide;
+  int yieldUntil, nextYield;
   int planFrom, planTo, planTime;
+  int planClass;
+  int fromAnchorResume, toAnchorResume;
+  qboolean classPending, classDirect;
   int safetyTime, safetyReason;
   vec3_t safetyPoint;
-  vec3_t goal, lastOrigin;
+  vec3_t goal, lastOrigin, yieldDirection;
 } botNavClient_t;
+
+typedef struct
+{
+  qboolean valid;
+  class_t classNum;
+  vec3_t point;
+  int resume, used;
+} botNavAnchorRetry_t;
 
 static botNavNode_t navNodes[ BOT_NAV_NODES ];
 static botNavClient_t navClients[ MAX_CLIENTS ];
+static botNavAnchorRetry_t navAnchorRetries[ BOT_NAV_ANCHOR_RETRIES ];
 static int navHazards[ BOT_NAV_HAZARDS ];
 static vec3_t navManual[ BOT_NAV_MANUAL ];
 static int navNodeCount, navHazardCount, navManualCount;
 static int navExpandNode, navExpandDirection, navNextSeed, navTraces;
 static int navSeedEntity, navSeedDirection;
+static int navPlans, navRoutes;
+static int navFallbacks, navFailures, navStuckEscapes, navSeedClient;
+static int navClassTraces, navClassNodes, navClassLinks, navClassRejected, navClassDeferred;
+static float navClassGravity;
+static vmCvar_t navNodeLimit, navTuning;
+static int navLimit;
 static qboolean navSeeded, navInitialized;
+static qboolean navWalkDynamicBlocked;
 
 /* Shared A* scratch avoids a large QVM stack frame. Game code is single threaded. */
 static float navCost[ BOT_NAV_NODES ];
@@ -72,12 +100,69 @@ static const float navDirections[ 8 ][ 2 ] =
   { 1, 1 }, { -1, 1 }, { -1, -1 }, { 1, -1 }
 };
 
+static void BotNavClassPoint( int number, class_t classNum, vec3_t point );
+
+/* Offline diagnostics must not consume the AI's generation trace budget. */
+void G_BotNavDebugJSON( gentity_t *ent, char *out, int size )
+{
+  botNavClient_t *client = &navClients[ ent->s.number ];
+  trace_t world, bodies, raised;
+  vec3_t waypoint, start, end;
+  int node = -1;
+  VectorCopy( client->goal, waypoint );
+  if( client->cursor < client->length )
+  {
+    node = client->path[ client->cursor ];
+    if( node >= 0 && node < navNodeCount )
+    {
+      BotNavClassPoint( node, ent->client->ps.stats[ STAT_CLASS ], waypoint );
+      waypoint[ 2 ] -= ent->r.mins[ 2 ];
+    }
+    else node = -1;
+  }
+  memset( &world, 0, sizeof( world ) );
+  world.fraction = 1.0f; world.entityNum = ENTITYNUM_NONE;
+  bodies = raised = world;
+  if( ent->health > 0 && ent->client->sess.spectatorState == SPECTATOR_NOT )
+  {
+    trap_Trace( &world, ent->client->ps.origin, ent->r.mins, ent->r.maxs,
+                waypoint, ent->s.number, BOT_NAV_MASK );
+    trap_Trace( &bodies, ent->client->ps.origin, ent->r.mins, ent->r.maxs,
+                waypoint, ent->s.number, MASK_PLAYERSOLID );
+    VectorCopy( ent->client->ps.origin, start ); start[ 2 ] += 18.0f;
+    VectorCopy( waypoint, end ); end[ 2 ] += 18.0f;
+    trap_Trace( &raised, start, ent->r.mins, ent->r.maxs,
+                end, ent->s.number, BOT_NAV_MASK );
+  }
+  Com_sprintf( out, size,
+    "{\"cursor\":%d,\"length\":%d,\"partial\":%d,\"from\":%d,\"to\":%d,\"next_node\":%d,"
+    "\"waypoint\":[%.1f,%.1f,%.1f],\"avoid_node\":%d,\"avoid_ms\":%d,\"blocked_ms\":%d,"
+    "\"safety_reason\":%d,\"safety_age_ms\":%d,\"class_pending\":%d,"
+    "\"world_fraction\":%.3f,\"world_startsolid\":%d,\"world_hit\":%d,"
+    "\"step_fraction\":%.3f,\"body_fraction\":%.3f,\"body_startsolid\":%d,\"body_hit\":%d}",
+    client->cursor, client->length, client->partial, client->planFrom, client->planTo, node,
+    waypoint[ 0 ], waypoint[ 1 ], waypoint[ 2 ], client->avoidNode,
+    MAX( 0, client->avoidUntil - level.time ),
+    client->blockedSince ? level.time - client->blockedSince : 0, client->safetyReason,
+    client->safetyReason ? level.time - client->safetyTime : -1, client->classPending,
+    world.fraction, world.startsolid, world.entityNum, raised.fraction,
+    bodies.fraction, bodies.startsolid, bodies.entityNum );
+}
+
+static qboolean BotNavMoverHit( const trace_t *trace )
+{
+  return ( trace->startsolid || trace->allsolid || trace->fraction < 1.0f ) &&
+         trace->entityNum >= 0 && trace->entityNum < level.num_entities &&
+         g_entities[ trace->entityNum ].s.eType == ET_MOVER;
+}
+
 static void BotNavTrace( trace_t *trace, const vec3_t start,
                          const vec3_t mins, const vec3_t maxs,
                          const vec3_t end, int pass, int mask )
 {
   navTraces++;
   trap_Trace( trace, start, mins, maxs, end, pass, mask );
+  if( BotNavMoverHit( trace ) ) navWalkDynamicBlocked = qtrue;
 }
 
 static qboolean BotNavHazard( const vec3_t feet, float radius, float height )
@@ -142,6 +227,7 @@ static qboolean BotNavWalkLink( const vec3_t from, const vec3_t to, int *flags )
   float distance, dz;
   int steps, i;
 
+  navWalkDynamicBlocked = qfalse;
   VectorSubtract( to, from, delta );
   distance = VectorLength( delta );
   if( distance > 384.0f || fabs( delta[ 2 ] ) > 96.0f )
@@ -186,6 +272,232 @@ static qboolean BotNavWalkLink( const vec3_t from, const vec3_t to, int *flags )
   return fabs( previous[ 2 ] - to[ 2 ] ) < 24.0f;
 }
 
+#define BOT_NAV_CLASS_UNKNOWN -1
+
+/* The graph describes supported human-sized floor travel. Larger classes need
+ * their own standing and edge clearance; local avoidance cannot repair a route
+ * through a corridor that the selected alien cannot enter. Cache static world
+ * results only, and spread first-time checks across server frames. */
+static void BotNavClassBounds( class_t classNum, vec3_t mins, vec3_t maxs )
+{
+  BG_ClassBoundingBox( classNum, mins, maxs, NULL, NULL, NULL );
+  maxs[ 2 ] -= mins[ 2 ];
+  mins[ 2 ] = 0.0f;
+}
+
+static qboolean BotNavClassFitsGraph( const vec3_t mins, const vec3_t maxs )
+{
+  return mins[ 0 ] >= navMins[ 0 ] && mins[ 1 ] >= navMins[ 1 ] &&
+         maxs[ 0 ] <= navMaxs[ 0 ] && maxs[ 1 ] <= navMaxs[ 1 ] &&
+         maxs[ 2 ] <= navMaxs[ 2 ];
+}
+
+static float BotNavClassLift( class_t classNum )
+{
+  float jump = BG_Class( classNum )->jumpMagnitude;
+  /* Ordinary Pmove also steps 18 units. Do not assume every nonzero jump can
+   * clear the graph's 42-unit lift (the tyrant's jump is only 170 units/sec). */
+  return MIN( 42.0f, 18.0f + jump * jump / ( 2.0f * MAX( 1.0f, g_gravity.value ) ) );
+}
+
+static int BotNavClassDefer( void )
+{
+  navClassDeferred++;
+  return BOT_NAV_CLASS_UNKNOWN;
+}
+
+static void BotNavClassTrace( trace_t *tr, const vec3_t from,
+                             const vec3_t mins, const vec3_t maxs, const vec3_t to )
+{
+  navClassTraces++;
+  trap_Trace( tr, from, mins, maxs, to, ENTITYNUM_NONE, BOT_NAV_MASK );
+}
+
+static qboolean BotNavClassClear( const trace_t *tr )
+{
+  return !tr->startsolid && !tr->allsolid && tr->fraction == 1.0f;
+}
+
+static void BotNavClassPoint( int number, class_t classNum, vec3_t point )
+{
+  VectorCopy( navNodes[ number ].point, point );
+  if( navTuning.integer && classNum > PCL_NONE && classNum < PCL_NUM_CLASSES )
+    point[ 2 ] += navNodes[ number ].classFootOffset[ classNum ];
+}
+
+static int BotNavClassGroundPoint( const vec3_t point, class_t classNum, vec3_t result )
+{
+  vec3_t mins, maxs, floorMaxs, start, end;
+  trace_t tr;
+  float originalZ = point[ 2 ];
+  BotNavClassBounds( classNum, mins, maxs );
+  if( navClassTraces > BOT_NAV_CLASS_TRACES - 2 ) return BotNavClassDefer( );
+  VectorCopy( maxs, floorMaxs ); floorMaxs[ 2 ] = 0.0f;
+  VectorCopy( point, start ); start[ 2 ] += 18.0f;
+  VectorCopy( point, end ); end[ 2 ] -= 18.0f;
+  BotNavClassTrace( &tr, start, mins, floorMaxs, end );
+  if( BotNavMoverHit( &tr ) ) return BotNavClassDefer( );
+  if( tr.startsolid || tr.allsolid || tr.fraction == 1.0f ||
+      tr.plane.normal[ 2 ] < 0.65f || ( tr.surfaceFlags & SURF_SKY ) ) return qfalse;
+  VectorCopy( tr.endpos, result ); result[ 2 ] += 1.0f;
+  /* A wider footprint touches farther up a slope than the graph's 15-unit
+   * radius. Keep XY fixed and permit only an ordinary step-sized adjustment;
+   * an adjacent ledge or a different floor is not a substitute for this node. */
+  if( fabs( result[ 2 ] - originalZ ) > 18.0f ||
+      BotNavHazard( result, MAX( maxs[ 0 ], maxs[ 1 ] ), maxs[ 2 ] ) ) return qfalse;
+  BotNavClassTrace( &tr, result, mins, maxs, result );
+  if( BotNavMoverHit( &tr ) ) return BotNavClassDefer( );
+  return BotNavClassClear( &tr );
+}
+
+static int BotNavClassConnectorPoint( const vec3_t point, class_t classNum, vec3_t result )
+{
+  vec3_t mins, maxs;
+  trace_t tr;
+  BotNavClassBounds( classNum, mins, maxs );
+  if( BotNavHazard( point, MAX( maxs[ 0 ], maxs[ 1 ] ), maxs[ 2 ] ) ) return qfalse;
+  if( navClassTraces > BOT_NAV_CLASS_TRACES - 3 ) return BotNavClassDefer( );
+  BotNavClassTrace( &tr, point, mins, maxs, point );
+  if( BotNavMoverHit( &tr ) ) return BotNavClassDefer( );
+  if( BotNavClassClear( &tr ) )
+  {
+    /* A bot can be standing on a spawn or a teammate above the world floor.
+     * Preserve already-clear feet; the supported WalkLink below must still
+     * prove the drop and the actual class segment must prove body clearance. */
+    VectorCopy( point, result );
+    return qtrue;
+  }
+  return BotNavClassGroundPoint( point, classNum, result );
+}
+
+static int BotNavClassNode( int number, class_t classNum )
+{
+  botNavNode_t *node;
+  vec3_t mins, maxs, point;
+  trace_t tr;
+  int bit, result;
+  qboolean pass;
+  if( number < 0 || number >= navNodeCount || classNum <= PCL_NONE ||
+      classNum >= PCL_NUM_CLASSES || classNum >= 16 ) return qfalse;
+  if( !navTuning.integer ) return qtrue;
+  node = &navNodes[ number ]; bit = 1 << classNum;
+  BotNavClassBounds( classNum, mins, maxs );
+  /* Hurt volumes can be enabled/removed, so they are tested outside the cache. */
+  BotNavClassPoint( number, classNum, point );
+  if( BotNavHazard( point, MAX( maxs[ 0 ], maxs[ 1 ] ), maxs[ 2 ] ) )
+    return qfalse;
+  if( node->classChecked & bit ) return ( node->classPass & bit ) != 0;
+  if( BotNavClassFitsGraph( mins, maxs ) ) pass = qtrue;
+  else
+  {
+    if( navClassTraces > BOT_NAV_CLASS_TRACES - 3 ) return BotNavClassDefer( );
+    BotNavClassTrace( &tr, node->point, mins, maxs, node->point );
+    if( BotNavMoverHit( &tr ) ) return BotNavClassDefer( );
+    pass = BotNavClassClear( &tr );
+    if( !pass )
+    {
+      result = BotNavClassGroundPoint( node->point, classNum, point );
+      if( result == BOT_NAV_CLASS_UNKNOWN ) return result;
+      pass = result == qtrue;
+      if( pass ) node->classFootOffset[ classNum ] = point[ 2 ] - node->point[ 2 ];
+    }
+  }
+  node->classChecked |= bit;
+  if( pass ) node->classPass |= bit;
+  else navClassRejected++;
+  navClassNodes++;
+  return pass;
+}
+
+/* Endpoints have already been checked. A human-sized supported link proves
+ * support, but not standing clearance for a wider/taller class. */
+static int BotNavClassSegment( const vec3_t from, const vec3_t to,
+                              class_t classNum, int *flags )
+{
+  vec3_t mins, maxs, start, end;
+  trace_t tr;
+  float lift = BotNavClassLift( classNum );
+  if( to[ 2 ] - from[ 2 ] > lift + 0.5f ) return qfalse;
+  BotNavClassBounds( classNum, mins, maxs );
+  if( BotNavClassFitsGraph( mins, maxs ) &&
+      ( !( *flags & BOT_NAV_JUMP ) || lift >= 42.0f ) ) return qtrue;
+  /* Reserve the complete bounded check so an unknown edge never gets cached
+   * as blocked merely because its last trace fell outside this frame's budget. */
+  if( navClassTraces > BOT_NAV_CLASS_TRACES - 3 ) return BotNavClassDefer( );
+  BotNavClassTrace( &tr, from, mins, maxs, to );
+  if( BotNavMoverHit( &tr ) ) return BotNavClassDefer( );
+  if( BotNavClassClear( &tr ) ) return qtrue;
+  VectorCopy( from, start ); VectorCopy( to, end );
+  start[ 2 ] += 18.0f; end[ 2 ] += 18.0f;
+  BotNavClassTrace( &tr, start, mins, maxs, end );
+  if( BotNavMoverHit( &tr ) ) return BotNavClassDefer( );
+  if( BotNavClassClear( &tr ) ) return qtrue;
+  if( BG_Class( classNum )->jumpMagnitude <= 0.0f || lift <= 18.0f ) return qfalse;
+  start[ 2 ] += lift - 18.0f; end[ 2 ] += lift - 18.0f;
+  BotNavClassTrace( &tr, start, mins, maxs, end );
+  if( BotNavMoverHit( &tr ) ) return BotNavClassDefer( );
+  if( !BotNavClassClear( &tr ) ) return qfalse;
+  *flags |= BOT_NAV_JUMP;
+  return qtrue;
+}
+
+static int BotNavClassLink( int from, int edge, class_t classNum, int *flags )
+{
+  botNavNode_t *node = &navNodes[ from ];
+  vec3_t start, end;
+  int result, destination = node->links[ edge ];
+  int bit = 1 << classNum;
+  result = BotNavClassNode( from, classNum );
+  if( result != qtrue ) return result;
+  result = BotNavClassNode( destination, classNum );
+  if( result != qtrue ) return result;
+  *flags = node->flags[ edge ];
+  if( node->linkChecked[ edge ] & bit )
+  {
+    if( node->linkJump[ edge ] & bit ) *flags |= BOT_NAV_JUMP;
+    return ( node->linkPass[ edge ] & bit ) != 0;
+  }
+  BotNavClassPoint( from, classNum, start );
+  BotNavClassPoint( destination, classNum, end );
+  result = BotNavClassSegment( start, end, classNum, flags );
+  if( result == BOT_NAV_CLASS_UNKNOWN ) return result;
+  node->linkChecked[ edge ] |= bit;
+  if( result )
+  {
+    node->linkPass[ edge ] |= bit;
+    if( *flags & BOT_NAV_JUMP ) node->linkJump[ edge ] |= bit;
+  }
+  else navClassRejected++;
+  navClassLinks++;
+  return result;
+}
+
+static int BotNavClassWalkLink( const vec3_t from, const vec3_t to,
+                               class_t classNum, int *flags )
+{
+  vec3_t mins, maxs, start, end;
+  int result;
+  qboolean small = qtrue;
+  if( navTuning.integer )
+  {
+    BotNavClassBounds( classNum, mins, maxs );
+    small = BotNavClassFitsGraph( mins, maxs );
+    if( !small && navClassTraces > BOT_NAV_CLASS_TRACES - 9 ) return BotNavClassDefer( );
+  }
+  VectorCopy( from, start ); VectorCopy( to, end );
+  if( navTuning.integer && !small )
+  {
+    result = BotNavClassConnectorPoint( from, classNum, start );
+    if( result != qtrue ) return result;
+    result = BotNavClassConnectorPoint( to, classNum, end );
+    if( result != qtrue ) return result;
+  }
+  if( !BotNavWalkLink( start, end, flags ) )
+    return navTuning.integer && navWalkDynamicBlocked ? BotNavClassDefer( ) : qfalse;
+  if( !navTuning.integer ) return qtrue;
+  return BotNavClassSegment( start, end, classNum, flags );
+}
+
 static int BotNavFindNode( const vec3_t point, float radius )
 {
   vec3_t delta;
@@ -209,12 +521,16 @@ static int BotNavFindNode( const vec3_t point, float radius )
 
 static int BotNavAddNode( const vec3_t point )
 {
-  int node;
+  int node, flags;
 
-  node = BotNavFindNode( point, BOT_NAV_MERGE );
-  if( node >= 0 )
+  node = BotNavFindNode( point, navTuning.integer ? 45.0f : BOT_NAV_MERGE );
+  /* Distance alone must never merge floors separated by a thin wall or a
+   * ceiling. The wider tuned merge radius removes overlapping seed lattices. */
+  if( node >= 0 && ( !navTuning.integer ||
+      DistanceSquared( point, navNodes[ node ].point ) < 1.0f ||
+      BotNavWalkLink( point, navNodes[ node ].point, &flags ) ) )
     return node;
-  if( navNodeCount == BOT_NAV_NODES )
+  if( navNodeCount >= navLimit )
     return -1;
   node = navNodeCount++;
   memset( &navNodes[ node ], 0, sizeof( navNodes[ node ] ) );
@@ -327,11 +643,12 @@ static float BotNavDistance( int from, int to )
 /* Pick a nearby reachable anchor, not one on the other side of a thin wall. */
 static int BotNavAnchor( const vec3_t point )
 {
-  int candidates[ 4 ], i, j, k, flags;
-  float distances[ 4 ], distance;
+  int candidates[ 16 ], i, j, k, flags;
+  int count = navTuning.integer ? 16 : 4;
+  float distances[ 16 ], distance;
   vec3_t delta;
 
-  for( i = 0; i < 4; i++ )
+  for( i = 0; i < count; i++ )
   {
     candidates[ i ] = -1;
     distances[ i ] = 384.0f * 384.0f;
@@ -342,10 +659,10 @@ static int BotNavAnchor( const vec3_t point )
     if( fabs( delta[ 2 ] ) > 96.0f )
       continue;
     distance = VectorLengthSquared( delta );
-    for( j = 0; j < 4; j++ )
+    for( j = 0; j < count; j++ )
       if( distance < distances[ j ] )
       {
-        for( k = 3; k > j; k-- )
+        for( k = count - 1; k > j; k-- )
         {
           candidates[ k ] = candidates[ k - 1 ];
           distances[ k ] = distances[ k - 1 ];
@@ -355,7 +672,7 @@ static int BotNavAnchor( const vec3_t point )
         break;
       }
   }
-  for( i = 0; i < 4; i++ )
+  for( i = 0; i < count; i++ )
   {
     if( candidates[ i ] < 0 )
       break;
@@ -365,30 +682,139 @@ static int BotNavAnchor( const vec3_t point )
   return -1;
 }
 
+static int *BotNavSharedAnchorResume( const vec3_t point, class_t classNum )
+{
+  int i, oldest = 0;
+  botNavAnchorRetry_t *retry;
+  /* These entries remember only candidate order, never collision proof. Exact
+   * stationary points let home and enemy approach queries retry independently. */
+  for( i = 0; i < BOT_NAV_ANCHOR_RETRIES; i++ )
+  {
+    retry = &navAnchorRetries[ i ];
+    if( retry->valid && retry->classNum == classNum &&
+        VectorCompare( retry->point, point ) )
+    { retry->used = level.time; return &retry->resume; }
+    if( !retry->valid ) oldest = i;
+    else if( navAnchorRetries[ oldest ].valid &&
+             retry->used < navAnchorRetries[ oldest ].used ) oldest = i;
+  }
+  retry = &navAnchorRetries[ oldest ];
+  retry->valid = qtrue; retry->classNum = classNum;
+  retry->resume = 0; retry->used = level.time;
+  VectorCopy( point, retry->point );
+  return &retry->resume;
+}
+
+static int BotNavAnchorForClass( const vec3_t point, class_t classNum,
+                                 qboolean towardPoint, qboolean *pending,
+                                 int *resume )
+{
+  int candidates[ 16 ], i, j, k, flags, result, count, start;
+  float distances[ 16 ], distance;
+  vec3_t delta, classPoint;
+  if( !navTuning.integer ) return BotNavAnchor( point );
+  for( i = 0; i < 16; i++ )
+  { candidates[ i ] = -1; distances[ i ] = 384.0f * 384.0f; }
+  for( i = 0; i < navNodeCount; i++ )
+  {
+    VectorSubtract( navNodes[ i ].point, point, delta );
+    if( fabs( delta[ 2 ] ) > 96.0f ) continue;
+    distance = VectorLengthSquared( delta );
+    for( j = 0; j < 16; j++ )
+      if( distance < distances[ j ] )
+      {
+        for( k = 15; k > j; k-- )
+        { candidates[ k ] = candidates[ k - 1 ]; distances[ k ] = distances[ k - 1 ]; }
+        candidates[ j ] = i; distances[ j ] = distance; break;
+      }
+  }
+  for( count = 0; count < 16 && candidates[ count ] >= 0; count++ ) { }
+  if( !count ) { *resume = 0; return -1; }
+  start = *resume % count;
+  for( k = 0; k < count; k++ )
+  {
+    i = ( start + k ) % count;
+    result = BotNavClassNode( candidates[ i ], classNum );
+    if( result == BOT_NAV_CLASS_UNKNOWN )
+    {
+      *pending = qtrue;
+      if( navClassTraces > BOT_NAV_CLASS_TRACES - 9 )
+      { *resume = i; return -1; }
+      continue;
+    }
+    if( !result ) continue;
+    /* The final anchor must be reachable in the direction the bot will use,
+     * especially when a low-jumping tyrant can drop but cannot climb back. */
+    BotNavClassPoint( candidates[ i ], classNum, classPoint );
+    if( towardPoint )
+      result = BotNavClassWalkLink( classPoint, point, classNum, &flags );
+    else
+      result = BotNavClassWalkLink( point, classPoint, classNum, &flags );
+    if( result == qtrue ) { *resume = 0; return candidates[ i ]; }
+    if( result == BOT_NAV_CLASS_UNKNOWN )
+    {
+      *pending = qtrue;
+      /* Resume at the first unfinished connector instead of repeatedly
+       * spending the budget on nearer known failures. */
+      if( navClassTraces > BOT_NAV_CLASS_TRACES - 9 )
+      { *resume = i; return -1; }
+    }
+  }
+  *resume = ( start + 1 ) % count;
+  return -1;
+}
+
 static void BotNavPlan( gentity_t *ent, botNavClient_t *client,
                         const vec3_t feet, const vec3_t goal )
 {
-  vec3_t floor;
-  int from, to, current, neighbor, i, steps, count;
-  float cost;
-  qboolean canJump;
+  vec3_t floor, classPoint;
+  int from, to, current, neighbor, i, steps, count, closest;
+  int searchLimit, result, flags;
+  float cost, distance, closestDistance;
+  qboolean canJump, pending = qfalse;
+  class_t classNum = ent->client->ps.stats[ STAT_CLASS ];
   botNavNode_t *node;
 
   client->length = client->cursor = 0;
+  client->partial = qfalse;
+  client->classPending = client->classDirect = qfalse;
+  navPlans++;
   client->planFrom = client->planTo = -1;
   client->planTime = level.time;
   client->nextPlan = level.time + 1500 + ent->s.number * 17;
   VectorCopy( goal, client->goal );
-  from = BotNavAnchor( feet );
+  from = BotNavAnchorForClass( feet, classNum, qfalse, &pending,
+                                &client->fromAnchorResume );
+  if( from < 0 && navTuning.integer )
+  {
+    from = BotNavSeed( feet );
+    result = BotNavClassNode( from, classNum );
+    if( result != qtrue )
+    { if( result == BOT_NAV_CLASS_UNKNOWN ) pending = qtrue; from = -1; }
+    else
+    {
+      BotNavClassPoint( from, classNum, classPoint );
+      result = BotNavClassWalkLink( feet, classPoint, classNum, &flags );
+      if( result != qtrue )
+      { if( result == BOT_NAV_CLASS_UNKNOWN ) pending = qtrue; from = -1; }
+    }
+  }
   VectorCopy( goal, floor );
   /* Goals can be the center of a building or the head of an enemy. */
   if( !BotNavFloor( goal, 32.0f, 192.0f, floor ) )
     floor[ 2 ] = feet[ 2 ];
-  to = BotNavAnchor( floor );
+  to = BotNavAnchorForClass( floor, classNum, qtrue, &pending,
+                              &client->toAnchorResume );
+  client->classPending = pending;
   client->planFrom = from;
   client->planTo = to;
-  if( from < 0 || to < 0 )
+  if( from < 0 || ( to < 0 && !navTuning.integer ) )
+  {
+    navFailures++;
+    if( pending ) client->nextPlan = level.time + 200 + ent->s.number * 7;
     return;
+  }
+  searchLimit = navTuning.integer ? navNodeCount : 2048;
   canJump = BG_Class( ent->client->ps.stats[ STAT_CLASS ] )->jumpMagnitude > 0.0f;
   navHeapCount = 0;
   for( i = 0; i < navNodeCount; i++ )
@@ -398,13 +824,25 @@ static void BotNavPlan( gentity_t *ent, botNavClient_t *client,
     navClosed[ i ] = 0;
   }
   navCost[ from ] = 0.0f;
-  navEstimate[ from ] = BotNavDistance( from, to );
+  navEstimate[ from ] = to >= 0 ? BotNavDistance( from, to ) :
+                       Distance( navNodes[ from ].point, floor );
   BotNavHeapPush( from );
+  closest = from;
+  closestDistance = Distance( feet, floor );
   current = -1;
   /* Bounded search keeps the server responsive on enormous maps. */
-  for( steps = 0; navHeapCount > 0 && steps < 2048; steps++ )
+  for( steps = 0; navHeapCount > 0 && steps < searchLimit; steps++ )
   {
     current = BotNavHeapPop( );
+    if( navTuning.integer )
+    {
+      distance = Distance( navNodes[ current ].point, floor );
+      if( distance < closestDistance )
+      {
+        closestDistance = distance;
+        closest = current;
+      }
+    }
     if( current == to )
       break;
     navClosed[ current ] = 1;
@@ -416,19 +854,47 @@ static void BotNavPlan( gentity_t *ent, botNavClient_t *client,
           ( !canJump && ( node->flags[ i ] & BOT_NAV_JUMP ) ) ||
           ( neighbor == client->avoidNode && level.time < client->avoidUntil ) )
         continue;
+      flags = node->flags[ i ];
+      if( navTuning.integer )
+      {
+        result = BotNavClassLink( current, i, classNum, &flags );
+        if( result == BOT_NAV_CLASS_UNKNOWN ) { client->classPending = qtrue; continue; }
+        if( !result ) continue;
+      }
       cost = navCost[ current ] + BotNavDistance( current, neighbor );
-      if( node->flags[ i ] & BOT_NAV_JUMP )
+      if( flags & BOT_NAV_JUMP )
         cost += 48.0f;
       if( cost >= navCost[ neighbor ] )
         continue;
       navCost[ neighbor ] = cost;
-      navEstimate[ neighbor ] = cost + BotNavDistance( neighbor, to );
+      navEstimate[ neighbor ] = cost + ( to >= 0 ? BotNavDistance( neighbor, to ) :
+                                  Distance( navNodes[ neighbor ].point, floor ) );
       navParent[ neighbor ] = current;
       BotNavHeapPush( neighbor );
     }
   }
-  if( current != to )
-    return;
+  if( current != to || to < 0 )
+  {
+    navFailures++;
+    if( client->classPending ) client->nextPlan = level.time + 200 + ent->s.number * 7;
+    /* Explore a supported route to a genuinely nearer frontier while the
+     * graph grows or a component is disconnected. This is deliberately not
+     * reported as a complete route to the requested objective. */
+    if( !navTuning.integer || closest == from ||
+        closestDistance + 96.0f >= Distance( feet, floor ) ||
+        Distance( feet, navNodes[ closest ].point ) < 96.0f )
+      return;
+    current = closest;
+    client->partial = qtrue;
+    navFallbacks++;
+  }
+  else
+  {
+    navRoutes++;
+    /* Every edge on the chosen path was known and class-valid, even if some
+     * alternative branches still await their first bounded clearance check. */
+    client->classPending = qfalse;
+  }
   count = 0;
   while( current >= 0 && count < BOT_NAV_NODES )
   {
@@ -447,6 +913,15 @@ void G_BotNavReset( int clientNum )
   memset( &navClients[ clientNum ], 0, sizeof( navClients[ clientNum ] ) );
   navClients[ clientNum ].avoidNode = -1;
   navClients[ clientNum ].planFrom = navClients[ clientNum ].planTo = -1;
+}
+
+void G_BotNavClearRoute( int clientNum )
+{
+  if( clientNum < 0 || clientNum >= MAX_CLIENTS ) return;
+  navClients[ clientNum ].length = navClients[ clientNum ].cursor = 0;
+  navClients[ clientNum ].nextPlan = 0;
+  navClients[ clientNum ].partial = qfalse;
+  navClients[ clientNum ].classPending = navClients[ clientNum ].classDirect = qfalse;
 }
 
 static void BotNavFilename( char *path, int size )
@@ -499,7 +974,15 @@ void G_BotNavInit( void )
 {
   int i;
 
+  trap_Cvar_Register( &navNodeLimit, "g_botNavNodes", "4096", CVAR_ARCHIVE | CVAR_LATCH );
+  trap_Cvar_Register( &navTuning, "g_botNavTuning", "0", CVAR_ARCHIVE );
+  navLimit = MAX( 1024, MIN( BOT_NAV_NODES, navNodeLimit.integer ) );
   navNodeCount = navHazardCount = navManualCount = 0;
+  navPlans = navRoutes = 0;
+  navFallbacks = navFailures = navStuckEscapes = navSeedClient = 0;
+  navClassTraces = navClassNodes = navClassLinks = navClassRejected = navClassDeferred = 0;
+  memset( navAnchorRetries, 0, sizeof( navAnchorRetries ) );
+  navClassGravity = g_gravity.value;
   navExpandNode = navExpandDirection = navNextSeed = navTraces = 0;
   navSeedEntity = MAX_CLIENTS;
   navSeedDirection = 0;
@@ -521,11 +1004,26 @@ void G_BotNavFrame( void )
 {
   gentity_t *ent;
   vec3_t seed, point, floor;
-  int node, flags, i;
+  int node, flags, i, clientNum;
 
   if( !navInitialized )
     return;
+  trap_Cvar_Update( &navTuning );
   navTraces = 0;
+  navClassTraces = 0;
+  if( fabs( navClassGravity - g_gravity.value ) > 0.001f )
+  {
+    /* Gravity changes ordinary jump reach, so only edge results expire. */
+    for( i = 0; i < navNodeCount; i++ )
+    {
+      memset( navNodes[ i ].linkChecked, 0, sizeof( navNodes[ i ].linkChecked ) );
+      memset( navNodes[ i ].linkPass, 0, sizeof( navNodes[ i ].linkPass ) );
+      memset( navNodes[ i ].linkJump, 0, sizeof( navNodes[ i ].linkJump ) );
+    }
+    navClassGravity = g_gravity.value;
+    if( navTuning.integer )
+      for( i = 0; i < MAX_CLIENTS; i++ ) G_BotNavClearRoute( i );
+  }
   /* Seeding is also incremental: maps may contain hundreds of entities. */
   while( !navSeeded && navTraces < 24 )
   {
@@ -543,8 +1041,10 @@ void G_BotNavFrame( void )
     VectorCopy( ent->r.currentOrigin, seed );
     if( navSeedDirection )
     {
-      seed[ 0 ] += 96.0f * navDirections[ navSeedDirection - 1 ][ 0 ];
-      seed[ 1 ] += 96.0f * navDirections[ navSeedDirection - 1 ][ 1 ];
+      seed[ 0 ] += ( navTuning.integer ? BOT_NAV_SPACING : 96.0f ) *
+                    navDirections[ navSeedDirection - 1 ][ 0 ];
+      seed[ 1 ] += ( navTuning.integer ? BOT_NAV_SPACING : 96.0f ) *
+                    navDirections[ navSeedDirection - 1 ][ 1 ];
     }
     BotNavSeed( seed );
     if( ++navSeedDirection == 9 )
@@ -559,19 +1059,28 @@ void G_BotNavFrame( void )
     navNextSeed = level.time + 1000;
     for( i = 0; i < level.maxclients; i++ )
     {
-      ent = &g_entities[ i ];
+      clientNum = navTuning.integer ? ( navSeedClient + i ) % level.maxclients : i;
+      ent = &g_entities[ clientNum ];
       if( !ent->inuse || !ent->client || ent->health <= 0 ||
           ent->client->sess.spectatorState != SPECTATOR_NOT ||
           ent->client->ps.groundEntityNum == ENTITYNUM_NONE ||
-          ( ent->client->ps.eFlags & EF_WALLCLIMB ) )
+          ( ( ent->client->ps.eFlags & EF_WALLCLIMB ) &&
+            ( !navTuning.integer || ent->client->ps.grapplePoint[ 2 ] < 0.7f ) ) )
         continue;
       VectorCopy( ent->client->ps.origin, seed );
       seed[ 2 ] += ent->r.mins[ 2 ];
-      if( BotNavFindNode( seed, 64.0f ) < 0 )
+      node = BotNavFindNode( seed, 64.0f );
+      if( node < 0 || ( navTuning.integer &&
+          !BotNavWalkLink( seed, navNodes[ node ].point, &flags ) ) )
         BotNavSeed( seed );
       if( navTraces >= 48 )
+      {
+        if( navTuning.integer ) navSeedClient = ( clientNum + 1 ) % level.maxclients;
         break;
+      }
     }
+    if( navTuning.integer && i == level.maxclients )
+      navSeedClient = ( navSeedClient + 1 ) % level.maxclients;
   }
   while( navExpandNode < navNodeCount && navTraces < BOT_NAV_TRACES )
   {
@@ -608,7 +1117,7 @@ void G_BotNavFrame( void )
 static qboolean BotNavSupport( gentity_t *ent, const vec3_t origin )
 {
   trace_t trace;
-  vec3_t start, end, feet, mins, maxs;
+  vec3_t start, end, feet, mins, maxs, bevel;
   float radius;
 
   VectorCopy( origin, feet );
@@ -625,9 +1134,24 @@ static qboolean BotNavSupport( gentity_t *ent, const vec3_t origin )
   end[ 2 ] -= 96.0f;
   BotNavTrace( &trace, start, mins, maxs, end,
                ent->s.number, BOT_NAV_MASK );
-  if( trace.startsolid || trace.allsolid || trace.fraction == 1.0f ||
-      trace.plane.normal[ 2 ] < 0.5f )
+  if( trace.startsolid || trace.allsolid || trace.fraction == 1.0f )
     return qfalse;
+  if( trace.plane.normal[ 2 ] < 0.5f )
+  {
+    if( !navTuning.integer ) return qfalse;
+    /* A wide flat footprint can touch a side bevel just before the real flat
+     * floor. Retry a small inset only at essentially the same floor height;
+     * this must not turn a distant floor below a ledge into valid support. */
+    VectorCopy( trace.endpos, bevel );
+    radius = MIN( 6.0f, radius );
+    VectorSet( mins, -radius, -radius, 0 );
+    VectorSet( maxs, radius, radius, 0 );
+    BotNavTrace( &trace, start, mins, maxs, end, ent->s.number, BOT_NAV_MASK );
+    if( trace.startsolid || trace.allsolid || trace.fraction == 1.0f ||
+        trace.plane.normal[ 2 ] < 0.7f || fabs( trace.endpos[ 2 ] - bevel[ 2 ] ) > 18.0f )
+      return qfalse;
+  }
+  radius = ent->r.maxs[ 0 ];
   return !BotNavHazard( trace.endpos, radius, ent->r.maxs[ 2 ] - ent->r.mins[ 2 ] );
 }
 
@@ -674,6 +1198,63 @@ static void BotNavViewVectors( gentity_t *ent, usercmd_t *cmd,
   AngleVectors( angles, forward, right, NULL );
 }
 
+static qboolean BotNavYieldClear( gentity_t *ent, const vec3_t direction )
+{
+  vec3_t start, end, feet, floor, landing;
+  trace_t tr;
+  VectorCopy( ent->client->ps.origin, start ); start[ 2 ] += 1.0f;
+  VectorMA( start, 72.0f, direction, end );
+  BotNavTrace( &tr, start, ent->r.mins, ent->r.maxs, end,
+               ent->s.number, MASK_PLAYERSOLID );
+  if( tr.startsolid || tr.allsolid || tr.fraction < 0.95f || !BotNavSupport( ent, end ) )
+    return qfalse;
+  VectorCopy( end, feet ); feet[ 2 ] += ent->r.mins[ 2 ];
+  if( !BotNavFloor( feet, 0.0f, 96.0f, floor ) ) return qfalse;
+  VectorCopy( floor, landing ); landing[ 2 ] -= ent->r.mins[ 2 ];
+  /* A clear lateral step does not prove a tall class will fit after dropping
+   * off its teammate. Check its actual standing hull at the supported landing. */
+  BotNavTrace( &tr, landing, ent->r.mins, ent->r.maxs, landing,
+               ent->s.number, MASK_PLAYERSOLID );
+  return !tr.startsolid && !tr.allsolid;
+}
+
+static qboolean BotNavUnstack( gentity_t *ent, botNavClient_t *client, vec3_t direction )
+{
+  int ground = ent->client->ps.groundEntityNum, i, index;
+  vec3_t feet, floor, candidate;
+  gentity_t *ally;
+  if( !navTuning.integer ) return qfalse;
+  if( client->yieldUntil > level.time )
+  {
+    if( BotNavYieldClear( ent, client->yieldDirection ) )
+    { VectorCopy( client->yieldDirection, direction ); return qtrue; }
+    client->yieldUntil = 0;
+  }
+  if( ground < 0 || ground >= level.maxclients || ground == ent->s.number ||
+      level.time < client->nextYield ) return qfalse;
+  ally = &g_entities[ ground ];
+  if( !ally->inuse || !ally->client || ally->health <= 0 ||
+      ally->client->pers.teamSelection != ent->client->pers.teamSelection ) return qfalse;
+  client->nextYield = level.time + 500;
+  VectorCopy( ent->client->ps.origin, feet ); feet[ 2 ] += ent->r.mins[ 2 ];
+  if( !BotNavFloor( feet, 32.0f, 96.0f, floor ) || feet[ 2 ] - floor[ 2 ] < 18.0f )
+    return qfalse;
+  /* A bounded sideways step clears the stale under-feet anchor. It remains
+   * ordinary player movement, with full class/body collision and floor guards. */
+  for( i = 0; i < 4; i++ )
+  {
+    index = ( ent->s.number + level.time / 500 + i * 2 ) & 7;
+    VectorSet( candidate, navDirections[ index ][ 0 ], navDirections[ index ][ 1 ], 0 );
+    VectorNormalize( candidate );
+    if( !BotNavYieldClear( ent, candidate ) ) continue;
+    VectorCopy( candidate, client->yieldDirection );
+    VectorCopy( candidate, direction );
+    client->yieldUntil = level.time + 350;
+    return qtrue;
+  }
+  return qfalse;
+}
+
 void G_BotNavMove( gentity_t *ent, botState_t *bot, const vec3_t goal,
                    usercmd_t *cmd, qboolean faceGoal )
 {
@@ -683,14 +1264,24 @@ void G_BotNavMove( gentity_t *ent, botState_t *bot, const vec3_t goal,
   trace_t trace, jumpTrace;
   float distance, clearance, score, best, angle, cosine, sine;
   float fmove, rmove, scale;
-  int i, flags, node;
-  qboolean wallclimber, climbing, jumping;
+  int i, flags, node, result;
+  class_t classNum;
+  qboolean wallclimber, climbing, jumping, yielding = qfalse;
 
   if( !ent || !ent->client || ent->s.number < 0 || ent->s.number >= MAX_CLIENTS )
     return;
+  VectorCopy( goal, bot->moveGoal );
+  bot->moveGoalTime = level.time;
   memset( &trace, 0, sizeof( trace ) );
   trace.fraction = 1.0f;
   client = &navClients[ ent->s.number ];
+  classNum = ent->client->ps.stats[ STAT_CLASS ];
+  if( navTuning.integer && client->planClass != classNum )
+  {
+    G_BotNavClearRoute( ent->s.number );
+    client->fromAnchorResume = client->toAnchorResume = 0;
+    client->planClass = classNum;
+  }
   VectorCopy( ent->client->ps.origin, feet );
   feet[ 2 ] += ent->r.mins[ 2 ] + 1.0f;
   VectorCopy( goal, waypoint );
@@ -710,17 +1301,28 @@ void G_BotNavMove( gentity_t *ent, botState_t *bot, const vec3_t goal,
     if( Distance( feet, goal ) < 256.0f )
     {
       vec3_t floor;
-      if( BotNavFloor( goal, 32.0f, 192.0f, floor ) &&
-          BotNavWalkLink( feet, floor, &flags ) )
+      result = qfalse;
+      if( BotNavFloor( goal, 32.0f, 192.0f, floor ) )
+        result = BotNavClassWalkLink( feet, floor, classNum, &flags );
+      if( result == qtrue )
       {
         client->length = client->cursor = 0;
+        client->partial = client->classPending = qfalse;
+        client->classDirect = qtrue;
         client->nextPlan = level.time + 750;
         VectorCopy( goal, client->goal );
         client->planFrom = client->planTo = -1;
         client->planTime = level.time;
       }
       else
+      {
         BotNavPlan( ent, client, feet, goal );
+        if( result == BOT_NAV_CLASS_UNKNOWN )
+        {
+          client->classPending = qtrue;
+          client->nextPlan = level.time + 200 + ent->s.number * 7;
+        }
+      }
     }
     else
       BotNavPlan( ent, client, feet, goal );
@@ -728,18 +1330,33 @@ void G_BotNavMove( gentity_t *ent, botState_t *bot, const vec3_t goal,
   while( client->cursor < client->length )
   {
     node = client->path[ client->cursor ];
-    if( Distance( feet, navNodes[ node ].point ) > 48.0f )
+    BotNavClassPoint( node, classNum, waypoint );
+    if( Distance( feet, waypoint ) > 48.0f )
       break;
     client->cursor++;
   }
   if( client->cursor < client->length )
   {
     node = client->path[ client->cursor ];
-    VectorCopy( navNodes[ node ].point, waypoint );
+    BotNavClassPoint( node, classNum, waypoint );
     waypoint[ 2 ] -= ent->r.mins[ 2 ];
   }
   else if( client->length == BOT_NAV_PATH )
     client->nextPlan = 0; /* Continue a route longer than the per-client path buffer. */
+  else if( client->partial && client->length > 0 )
+  {
+    /* At a partial frontier, replan before attempting an unsupported shortcut
+     * to the far objective. Local collision steering still guards every step. */
+    client->nextPlan = 0;
+    VectorCopy( ent->client->ps.origin, waypoint );
+  }
+  else if( navTuning.integer && !client->length && !client->classDirect )
+  {
+    /* No verified class route is different from a clear direct shortcut.
+     * Stay supported while deferred checks fill their caches; do not pursue
+     * the raw distant goal as if a human-only route had been proven. */
+    VectorCopy( ent->client->ps.origin, waypoint );
+  }
 
   VectorSubtract( waypoint, ent->client->ps.origin, direction );
   if( !climbing )
@@ -749,9 +1366,7 @@ void G_BotNavMove( gentity_t *ent, botState_t *bot, const vec3_t goal,
     ProjectPointOnPlane( direction, direction, normal );
   }
   distance = VectorNormalize( direction );
-  if( distance < 12.0f )
-    return;
-
+  if( !navTuning.integer && distance < 12.0f ) return;
   /* Remember failure to advance, independent of how often a bot thinks. */
   if( level.time >= client->lastCheck + 600 )
   {
@@ -768,6 +1383,7 @@ void G_BotNavMove( gentity_t *ent, botState_t *bot, const vec3_t goal,
   }
   if( client->blockedSince && level.time - client->blockedSince > 1600 )
   {
+    navStuckEscapes++;
     if( client->cursor < client->length )
     {
       client->avoidNode = client->path[ client->cursor ];
@@ -779,8 +1395,16 @@ void G_BotNavMove( gentity_t *ent, botState_t *bot, const vec3_t goal,
     client->escapeSide = ( ( ent->s.number + level.time / 1000 ) & 1 ) ? 1 : -1;
   }
 
+  if( navTuning.integer && !climbing &&
+      ( distance < 48.0f || client->yieldUntil > level.time ) )
+  {
+    yielding = BotNavUnstack( ent, client, direction );
+    if( yielding ) distance = 72.0f;
+  }
+  if( distance < 12.0f ) return;
+
   VectorCopy( direction, selected );
-  if( !climbing )
+  if( !climbing && !yielding )
   {
     clearance = BotNavClearance( ent, direction, 18.0f, &trace );
     if( clearance < 0.85f )
@@ -933,6 +1557,150 @@ void G_BotNavSafeMove( gentity_t *ent, usercmd_t *cmd )
   }
 }
 
+qboolean G_BotNavRallyPointForClass( const vec3_t base, const vec3_t objective,
+                                    class_t classNum, vec3_t point )
+{
+  vec3_t floor, classPoint;
+  int from, node, neighbor, i, flags, result, head = 0, tail = 0, best = -1;
+  int fallback = -1;
+  float distance, score, bestScore = BOT_NAV_INFINITY, fallbackScore = BOT_NAV_INFINITY;
+  qboolean pending = qfalse;
+  if( !navNodeCount || !BotNavFloor( base, 32.0f, 192.0f, floor ) ) return qfalse;
+  from = BotNavAnchorForClass( floor, classNum, qfalse, &pending,
+                                BotNavSharedAnchorResume( floor, classNum ) );
+  if( from < 0 ) return qfalse;
+  for( i = 0; i < navNodeCount; i++ ) navHeapPosition[ i ] = -1;
+  navReversePath[ tail++ ] = from;
+  navHeapPosition[ from ] = 0;
+  while( head < tail )
+  {
+    node = navReversePath[ head++ ];
+    BotNavClassPoint( node, classNum, classPoint );
+    distance = Distance( base, classPoint );
+    if( distance >= 200.0f && distance <= 700.0f && navNodes[ node ].numLinks >= 2 )
+    {
+      score = Distance( objective, classPoint ) + fabs( distance - 400.0f ) * 0.3f;
+      if( score < bestScore ) { bestScore = score; best = node; }
+    }
+    else if( navTuning.integer && distance >= 64.0f && distance < 200.0f )
+    {
+      /* During bounded cache warmup, gather on a verified reachable floor
+       * near home rather than an unverified far choke or building centre. */
+      score = Distance( objective, classPoint );
+      if( score < fallbackScore ) { fallbackScore = score; fallback = node; }
+    }
+    for( i = 0; i < navNodes[ node ].numLinks; i++ )
+    {
+      neighbor = navNodes[ node ].links[ i ];
+      if( navHeapPosition[ neighbor ] >= 0 ) continue;
+      if( navTuning.integer )
+      {
+        result = BotNavClassLink( node, i, classNum, &flags );
+        if( result != qtrue ) continue;
+      }
+      navHeapPosition[ neighbor ] = 0;
+      navReversePath[ tail++ ] = neighbor;
+    }
+  }
+  if( best < 0 && navTuning.integer ) best = fallback >= 0 ? fallback : from;
+  if( best < 0 ) return qfalse;
+  BotNavClassPoint( best, classNum, point );
+  return qtrue;
+}
+
+qboolean G_BotNavRallyPoint( const vec3_t base, const vec3_t objective, vec3_t point )
+{
+  return G_BotNavRallyPointForClass( base, objective, PCL_ALIEN_LEVEL4, point );
+}
+
+static qboolean BotNavCanReach( int from, int to )
+{
+  int head = 0, tail = 1, node, neighbor, i;
+  if( from < 0 || to < 0 ) return qfalse;
+  memset( navClosed, 0, navNodeCount * sizeof( navClosed[ 0 ] ) );
+  navReversePath[ 0 ] = from;
+  navClosed[ from ] = 1;
+  while( head < tail )
+  {
+    node = navReversePath[ head++ ];
+    if( node == to ) return qtrue;
+    for( i = 0; i < navNodes[ node ].numLinks; i++ )
+    {
+      neighbor = navNodes[ node ].links[ i ];
+      if( navClosed[ neighbor ] ) continue;
+      navClosed[ neighbor ] = 1;
+      navReversePath[ tail++ ] = neighbor;
+    }
+  }
+  return qfalse;
+}
+
+void G_BotNavConnectivity( int *components, int *largest, int *basesConnected )
+{
+  int i, j, node, neighbor, head, tail, base[ NUM_TEAMS ];
+  vec3_t floor;
+  gentity_t *ent;
+  *components = *largest = *basesConnected = 0;
+  for( i = 0; i < NUM_TEAMS; i++ ) base[ i ] = -1;
+  for( i = 0; i < navNodeCount; i++ ) navHeapPosition[ i ] = -1;
+  for( i = 0; i < navNodeCount; i++ )
+  {
+    if( navHeapPosition[ i ] >= 0 ) continue;
+    head = 0; tail = 1; navReversePath[ 0 ] = i;
+    navHeapPosition[ i ] = *components;
+    while( head < tail )
+    {
+      node = navReversePath[ head++ ];
+      for( j = 0; j < navNodes[ node ].numLinks; j++ )
+      {
+        neighbor = navNodes[ node ].links[ j ];
+        if( navHeapPosition[ neighbor ] >= 0 ) continue;
+        navHeapPosition[ neighbor ] = *components;
+        navReversePath[ tail++ ] = neighbor;
+      }
+    }
+    if( tail > *largest ) *largest = tail;
+    ( *components )++;
+  }
+  for( i = MAX_CLIENTS; i < level.num_entities; i++ )
+  {
+    ent = &g_entities[ i ];
+    if( !ent->inuse || ent->s.eType != ET_BUILDABLE || ent->health <= 0 ) continue;
+    if( ent->s.modelindex != BA_H_REACTOR && ent->s.modelindex != BA_A_OVERMIND ) continue;
+    if( BotNavFloor( ent->r.currentOrigin, 48.0f, 256.0f, floor ) )
+      base[ ent->buildableTeam ] = BotNavAnchor( floor );
+  }
+  if( base[ TEAM_HUMANS ] >= 0 && base[ TEAM_ALIENS ] >= 0 &&
+      BotNavCanReach( base[ TEAM_HUMANS ], base[ TEAM_ALIENS ] ) &&
+      BotNavCanReach( base[ TEAM_ALIENS ], base[ TEAM_HUMANS ] ) )
+    *basesConnected = 1;
+}
+
+void G_BotNavDiagnostics( int *fallbacks, int *failures, int *stuckEscapes )
+{
+  *fallbacks = navFallbacks;
+  *failures = navFailures;
+  *stuckEscapes = navStuckEscapes;
+}
+
+void G_BotNavClassMetrics( int *nodes, int *links, int *rejected, int *deferred )
+{
+  *nodes = navClassNodes; *links = navClassLinks;
+  *rejected = navClassRejected; *deferred = navClassDeferred;
+}
+
+void G_BotNavMetrics( int *nodes, int *links, int *expanded,
+                      int *plans, int *routes )
+{
+  int i;
+  *nodes = navNodeCount;
+  *links = 0;
+  for( i = 0; i < navNodeCount; i++ ) *links += navNodes[ i ].numLinks;
+  *expanded = navExpandNode;
+  *plans = navPlans;
+  *routes = navRoutes;
+}
+
 void G_BotNavStatus( void )
 {
   int i, links;
@@ -942,9 +1710,13 @@ void G_BotNavStatus( void )
     links += navNodes[ i ].numLinks;
   G_Printf( "botnav: %d/%d floor nodes, %d directed links, %d expanded, "
             "%d manual seeds, %d hurt volumes; %s\n",
-            navNodeCount, BOT_NAV_NODES, links, navExpandNode,
+            navNodeCount, navLimit, links, navExpandNode,
             navManualCount, navHazardCount,
             !navSeeded || navExpandNode < navNodeCount ? "generating" : "ready" );
+  G_Printf( "botnav: tuning %d, %d partial routes, %d failed full routes, %d stuck escapes\n",
+            navTuning.integer, navFallbacks, navFailures, navStuckEscapes );
+  G_Printf( "botnav: class cache %d nodes/%d links checked, %d rejected, %d deferred queries\n",
+            navClassNodes, navClassLinks, navClassRejected, navClassDeferred );
 }
 
 static void BotNavPrintPaths( void )
@@ -1004,12 +1776,12 @@ static void BotNavPrintPaths( void )
               vtos( client->goal ), vtos( waypoint ), level.time - client->planTime,
               g_botStates[ i ].cmd.forwardmove, g_botStates[ i ].cmd.rightmove,
               g_botStates[ i ].cmd.upmove );
-    G_Printf( "    stalled %d ms avoid %d/%d ms safety %s age %d point %s\n",
+    G_Printf( "    stalled %d ms avoid %d/%d ms safety %s age %d point %s partial %d\n",
               client->blockedSince ? level.time - client->blockedSince : 0,
               client->avoidNode, client->avoidUntil > level.time ? client->avoidUntil - level.time : 0,
               client->safetyReason == 1 ? "hazard" : client->safetyReason == 2 ? "support" : "none",
               client->safetyReason ? level.time - client->safetyTime : -1,
-              vtos( client->safetyPoint ) );
+              vtos( client->safetyPoint ), client->partial );
   }
 }
 

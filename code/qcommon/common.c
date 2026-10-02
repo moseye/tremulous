@@ -2944,7 +2944,7 @@ Com_Frame
 */
 void Com_Frame( void ) {
 
-	int		msec, minMsec;
+	int		msec, minMsec, fastSimMsec;
 	int		timeVal, timeValSV;
 	static int	lastTime = 0, bias = 0;
 
@@ -2976,7 +2976,10 @@ void Com_Frame( void ) {
 	}
 
 	// Figure out how much time we have
-	if(!com_timedemo->integer)
+	fastSimMsec = SV_FastSimMsec();
+	if(fastSimMsec)
+		minMsec = 0;
+	else if(!com_timedemo->integer)
 	{
 		if(com_dedicated->integer)
 			minMsec = SV_FrameMsec();
@@ -3040,8 +3043,10 @@ void Com_Frame( void ) {
 		com_altivec->modified = qfalse;
 	}
 
-	// mess with msec if needed
-	msec = Com_ModifyMsec(msec);
+	// Offline simulation runs one ordinary server physics tick per outer frame.
+	// Event processing and local console commands still run on every tick.
+	fastSimMsec = SV_FastSimMsec();
+	msec = fastSimMsec ? fastSimMsec : Com_ModifyMsec(msec);
 
 	//
 	// server side

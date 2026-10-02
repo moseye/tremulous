@@ -2488,6 +2488,8 @@ void G_RunFrame( int levelTime )
   CheckExitRules( );
 
   // update to team status?
+  G_BotBenchmarkFrame( );
+
   CheckTeamStatus( );
 
   // cancel vote if timed out

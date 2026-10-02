@@ -1447,6 +1447,7 @@ FireWeapon3
 */
 void FireWeapon3( gentity_t *ent )
 {
+  G_BotBenchmarkShot( ent, 3 );
   if( ent->client )
   {
     // set aiming directions
@@ -1482,6 +1483,7 @@ FireWeapon2
 */
 void FireWeapon2( gentity_t *ent )
 {
+  G_BotBenchmarkShot( ent, 2 );
   if( ent->client )
   {
     // set aiming directions
@@ -1526,6 +1528,7 @@ FireWeapon
 */
 void FireWeapon( gentity_t *ent )
 {
+  G_BotBenchmarkShot( ent, 1 );
   if( ent->client )
   {
     // set aiming directions

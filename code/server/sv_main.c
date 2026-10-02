@@ -32,6 +32,8 @@ server_t		sv;					// local server
 vm_t			*gvm = NULL;				// game virtual machine
 
 cvar_t	*sv_fps = NULL;			// time rate for running non-clients
+cvar_t	*sv_fastSim = NULL;		// offline fixed-tick simulation without wall pacing
+cvar_t	*sv_simulationSeed = NULL;	// optional reproducible game initialization seed
 cvar_t	*sv_timeout;			// seconds without any message
 cvar_t	*sv_zombietime;			// seconds to sink messages after disconnect
 cvar_t	*sv_rconPassword;		// password for remote server commands
@@ -1033,12 +1035,48 @@ static qboolean SV_CheckPaused( void ) {
 
 /*
 ==================
+SV_FastSimMsec
+Return one normal server tick for offline fast simulation, or zero normally.
+==================
+*/
+int SV_FastSimMsec(void)
+{
+	int i, frameMsec;
+
+	if (!sv_fastSim || !sv_fastSim->integer)
+		return 0;
+
+	// This mode advances game time faster than network clients can follow.
+	// Keep it strictly offline, including after a console net_restart.
+	if (!com_dedicated->integer || Cvar_VariableIntegerValue("net_enabled"))
+		Com_Error(ERR_FATAL, "sv_fastSim requires dedicated 1 or 2 and net_enabled 0");
+
+	if (!com_sv_running->integer)
+		return 0;
+
+	for (i = 0; i < sv_maxclients->integer; i++)
+	{
+		if (svs.clients[i].state >= CS_CONNECTED && !svs.clients[i].isBot)
+			Com_Error(ERR_FATAL, "sv_fastSim cannot run with human clients connected");
+	}
+
+	if (sv_fps->integer < 1)
+		Cvar_Set("sv_fps", "20");
+	frameMsec = 1000 / sv_fps->integer;
+	return frameMsec < 1 ? 1 : frameMsec;
+}
+
+/*
+==================
 SV_FrameMsec
-Return time in millseconds until processing of the next server frame.
+Return time in milliseconds until processing of the next server frame.
 ==================
 */
 int SV_FrameMsec(void)
 {
+	if (SV_FastSimMsec())
+		return 0;
+
 	if(sv_fps)
 	{
 		int frameMsec;
@@ -1064,6 +1102,7 @@ happen before SV_Frame is called
 */
 void SV_Frame( int msec ) {
 	int		frameMsec;
+	int		fastSimMsec;
 	int		startTime;
 
 	// the menu kills the server with this cvar
@@ -1094,7 +1133,8 @@ void SV_Frame( int msec ) {
 		Cvar_Set( "sv_fps", "10" );
 	}
 
-	frameMsec = 1000 / sv_fps->integer * com_timescale->value;
+	fastSimMsec = SV_FastSimMsec();
+	frameMsec = fastSimMsec ? fastSimMsec : 1000 / sv_fps->integer * com_timescale->value;
 	// don't let it scale below 1ms
 	if(frameMsec < 1)
 	{

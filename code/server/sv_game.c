@@ -551,6 +551,7 @@ Called for both a full init and a restart
 */
 static void SV_InitGameVM( qboolean restart ) {
 	int		i;
+	int		randomSeed;
 
 	// start the entity parsing at the beginning
 	sv.entityParsePoint = CM_EntityString();
@@ -563,9 +564,9 @@ static void SV_InitGameVM( qboolean restart ) {
 		svs.clients[i].gentity = NULL;
 	}
 	
-	// use the current msec count for a random seed
-	// init for this gamestate
-	VM_Call (gvm, GAME_INIT, sv.time, Com_Milliseconds(), restart);
+	// Preserve normal seeding unless an offline benchmark requests a fixed seed.
+	randomSeed = sv_simulationSeed->integer > 0 ? sv_simulationSeed->integer : Com_Milliseconds();
+	VM_Call (gvm, GAME_INIT, sv.time, randomSeed, restart);
 }
 
 

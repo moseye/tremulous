@@ -22,6 +22,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 
 #include "g_local.h"
+#include "g_bot.h"
 
 damageRegion_t  g_damageRegions[ PCL_NUM_CLASSES ][ MAX_DAMAGE_REGIONS ];
 int             g_numDamageRegions[ PCL_NUM_CLASSES ];
@@ -269,6 +270,7 @@ void player_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
   else
     obit = modNames[ meansOfDeath ];
 
+  G_BotBenchmarkDeath( self, attacker );
   G_LogPrintf( "Die: %d %d %s: %s" S_COLOR_WHITE " killed %s\n",
     killer,
     (int)( self - g_entities ),
@@ -1138,6 +1140,7 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker,
   // do the damage
   if( take )
   {
+    G_BotBenchmarkDamage( targ, attacker, take );
     targ->health = targ->health - take;
 
     if( targ->client )

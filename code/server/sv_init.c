@@ -558,8 +558,14 @@ void SV_SpawnServer( char *server, qboolean killBots ) {
 
 	// run another frame to allow things to look at all the players
 	VM_Call (gvm, GAME_RUN_FRAME, sv.time);
-	sv.time += 100;
-	svs.time += 100;
+	// Keep the offline clock at the last simulated instant. Advancing it here
+	// would make the first fixed-tick frame a 150ms jump after map bootstrap.
+	if (!sv_fastSim->integer && !(com_dedicated->integer &&
+	    !Cvar_VariableIntegerValue("net_enabled") && sv_simulationSeed->integer > 0))
+	{
+		sv.time += 100;
+		svs.time += 100;
+	}
 
 	if ( sv_pure->integer ) {
 		// the server sends these to the clients so they will only
@@ -663,6 +669,16 @@ void SV_Init (void)
 	sv_rconPassword = Cvar_Get ("rconPassword", "", CVAR_TEMP );
 	sv_privatePassword = Cvar_Get ("sv_privatePassword", "", CVAR_TEMP );
 	sv_fps = Cvar_Get ("sv_fps", "20", CVAR_TEMP );
+	sv_fastSim = Cvar_Get ("sv_fastSim", "0", CVAR_INIT );
+	Cvar_CheckRange(sv_fastSim, 0, 1, qtrue);
+	sv_simulationSeed = Cvar_Get ("sv_simulationSeed", "0", CVAR_INIT );
+	if (sv_fastSim->integer)
+	{
+		if (!com_dedicated->integer || !Cvar_VariableString("net_enabled")[0] ||
+		    Cvar_VariableIntegerValue("net_enabled"))
+			Com_Error(ERR_FATAL, "sv_fastSim requires dedicated 1 or 2 and net_enabled 0");
+		Com_Printf("Offline fast simulation enabled: normal sv_fps ticks, no wall-clock pacing\n");
+	}
 	sv_timeout = Cvar_Get ("sv_timeout", "200", CVAR_TEMP );
 	sv_zombietime = Cvar_Get ("sv_zombietime", "2", CVAR_TEMP );
 

@@ -1511,6 +1511,9 @@ void ClientSpawn( gentity_t *ent, gentity_t *spawn, vec3_t origin, vec3_t angles
   // clear entity state values
   BG_PlayerStateToEntityState( &client->ps, &ent->s, qtrue );
 
+  if( spawn && spawn != ent && spawn->s.eType == ET_BUILDABLE &&
+      client->sess.spectatorState == SPECTATOR_NOT )
+    G_BotBenchmarkSpawn( ent );
   client->pers.infoChangeTime = level.time;
 }
 

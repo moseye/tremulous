@@ -155,10 +155,14 @@ void G_BotInit( void )
   trap_AddCommand( "botnav" );
   G_BotNavInit( );
   G_BotBuildInit( );
+  G_BotCombatInit( );
+  G_BotTeamInit( );
+  G_BotBenchmarkInit( );
 }
 
 void G_BotShutdown( void )
 {
+  G_BotBenchmarkShutdown( );
   trap_RemoveCommand( "bot" );
   trap_RemoveCommand( "botnav" );
 }
@@ -229,6 +233,7 @@ static gentity_t *BotStrategicGoal( gentity_t *ent, botState_t *bot )
     if( !other->inuse || other->s.eType != ET_BUILDABLE || other->health <= 0 )
       continue;
     if( defend != ( other->buildableTeam == bot->team ) ) continue;
+    if( !defend && !G_BotCanDamageTarget( ent, other ) ) continue;
     score = DistanceSquared( ent->r.currentOrigin, other->r.currentOrigin );
     if( other->s.modelindex == BA_A_OVERMIND || other->s.modelindex == BA_H_REACTOR )
       score *= 0.25f;
@@ -241,14 +246,18 @@ void G_BotFrame( void )
 {
   int i, j;
   gentity_t *ent, *goal, *service;
-  vec3_t servicePoint;
+  vec3_t servicePoint, teamGoal;
   botState_t *bot;
   usercmd_t *cmd;
+  qboolean retreat, wasRallying;
   trap_Cvar_Update( &g_botThink );
   trap_Cvar_Update( &g_botSkill );
   trap_Cvar_Update( &g_botBuild );
   trap_Cvar_Update( &g_botDebug );
   G_BotNavFrame( );
+  G_BotBuildFrame( );
+  G_BotCombatFrame( );
+  G_BotTeamFrame( );
   for( i = 0; i < level.maxclients; i++ )
   {
     if( !G_BotIsBot( i ) || level.clients[ i ].pers.connected != CON_CONNECTED ) continue;
@@ -300,7 +309,11 @@ void G_BotFrame( void )
       cmd->weapon = ent->client->ps.weapon;
       ent->client->ps.stats[ STAT_BUILDABLE ] = BA_NONE;
       service = G_BotEconomyThink( ent, bot );
-      if( !G_BotCombatThink( ent, bot, cmd ) )
+      retreat = G_BotCombatRetreat( ent, bot, cmd );
+      wasRallying = bot->rallying;
+      bot->rallying = !retreat && !service && G_BotTeamRally( ent, bot, teamGoal );
+      if( wasRallying != bot->rallying ) G_BotNavClearRoute( i );
+      if( !retreat && !G_BotCombatThink( ent, bot, cmd ) )
       {
         if( service )
         {
@@ -316,11 +329,39 @@ void G_BotFrame( void )
         }
         else if( !G_BotBuildThink( ent, bot, cmd ) )
         {
-          goal = BotStrategicGoal( ent, bot );
-          if( goal && ( bot->role == BOT_ATTACK ||
+          if( G_BotTeamGoal( ent, bot, teamGoal ) )
+            G_BotNavMove( ent, bot, teamGoal, cmd, qtrue );
+          else
+          {
+            goal = BotStrategicGoal( ent, bot );
+            if( goal && ( bot->role == BOT_ATTACK ||
                         DistanceSquared( ent->r.currentOrigin, goal->r.currentOrigin ) > 260.0f * 260.0f ) )
-            G_BotNavMove( ent, bot, goal->r.currentOrigin, cmd, qtrue );
+              G_BotNavMove( ent, bot, goal->r.currentOrigin, cmd, qtrue );
+          }
         }
+      }
+      if( bot->rallying )
+      {
+        cmd->forwardmove = cmd->rightmove = cmd->upmove = 0;
+        cmd->buttons &= ~BUTTON_SPRINT;
+        if( ent->client->ps.weapon == WP_ALEVEL3 || ent->client->ps.weapon == WP_ALEVEL3_UPG ||
+            ent->client->ps.weapon == WP_ALEVEL4 ) cmd->buttons &= ~BUTTON_ATTACK2;
+        if( DistanceSquared( ent->client->ps.origin, teamGoal ) > 1.0f )
+          G_BotNavMove( ent, bot, teamGoal, cmd, qfalse );
+        else G_BotNavClearRoute( i );
+      }
+      else if( !retreat && !service &&
+               !( ent->client->ps.weapon == WP_ALEVEL4 &&
+                  ( ( ent->client->ps.stats[ STAT_STATE ] & SS_CHARGING ) ||
+                    ( cmd->buttons & BUTTON_ATTACK2 ) ) ) &&
+               G_BotTeamAdvance( ent, bot, teamGoal ) )
+      {
+        /* Keep the weapon's aim and ability commands while following the
+         * shared assault route instead of chasing every distant contact. */
+        cmd->forwardmove = cmd->rightmove = 0;
+        if( DistanceSquared( ent->client->ps.origin, teamGoal ) > 1.0f )
+          G_BotNavMove( ent, bot, teamGoal, cmd, qfalse );
+        else G_BotNavClearRoute( i );
       }
       G_BotNavSafeMove( ent, cmd );
       bot->nextThink = level.time + BotClamp( g_botThink.integer, 25, 250 );
@@ -370,6 +411,49 @@ static qboolean BotAdd( team_t team, int skill, const char *name, botRole_t role
   return qtrue;
 }
 
+int G_BotFillTeam( team_t team, int wanted, int skill, qboolean bell )
+{
+  int i, count = 0, clients[ MAX_CLIENTS ], builders = 1, defenders = 0;
+  int currentBuilders = 0, currentDefenders = 0;
+  botRole_t role;
+  trap_Cvar_Update( &g_botTeamwork );
+  if( g_botTeamwork.integer )
+  {
+    builders = MIN( 4, MAX( 1, ( wanted + 7 ) / 8 ) );
+    defenders = wanted >= 12 ? 2 : wanted >= 6 ? 1 : 0;
+  }
+  for( i = 0; i < level.maxclients; i++ )
+    if( G_BotIsBot( i ) && g_botStates[ i ].team == team ) count++;
+  for( i = level.maxclients - 1; count > wanted && i >= 0; i-- )
+    if( G_BotIsBot( i ) && g_botStates[ i ].team == team )
+    { trap_DropClient( i, "bot fill" ); count--; }
+  for( i = 0; i < level.maxclients; i++ )
+    if( G_BotIsBot( i ) && g_botStates[ i ].team == team )
+    {
+      if( g_botStates[ i ].role == BOT_BUILD ) currentBuilders++;
+      if( g_botStates[ i ].role == BOT_DEFEND ) currentDefenders++;
+    }
+  while( count < wanted )
+  {
+    role = count == 0 ? BOT_BUILD : BOT_ATTACK;
+    if( g_botTeamwork.integer )
+      role = currentBuilders < builders ? BOT_BUILD : currentDefenders < defenders ? BOT_DEFEND : BOT_ATTACK;
+    if( !BotAdd( team, bell ? BotBellRandomSkill( ) : skill, "",
+                 role ) ) break;
+    if( role == BOT_BUILD ) currentBuilders++;
+    if( role == BOT_DEFEND ) currentDefenders++;
+    count++;
+  }
+  if( bell )
+  {
+    count = 0;
+    for( i = 0; i < level.maxclients; i++ )
+      if( G_BotIsBot( i ) && g_botStates[ i ].team == team ) clients[ count++ ] = i;
+    BotAssignBellSkills( clients, count );
+  }
+  return count;
+}
+
 static int BotFind( const char *name )
 {
   int i, number;
@@ -389,9 +473,11 @@ static void BotHelp( void )
     "  bot skill <id|name|all> <1-10|bell>\n"
     "  bot role <id|name|all> <attack|defend|build>\n"
     "  bot team <id|name> <humans|aliens|spectator>\n"
-    "  bot list; bot buildings; botnav help\n"
+    "  bot list; bot buildings; bot tactics; botnav help\n"
     "bell: balanced, shuffled skills centered at 5.5; fill redistributes the whole team.\n"
-    "Cvars: g_botThink (25-250 ms), g_botSkill (default), g_botBuild (0/1), g_botDebug\n" );
+    "Cvars: g_botThink (25-250 ms), g_botSkill (default), g_botBuild (0/1), g_botDebug\n"
+    "  g_botCombatTuning, g_botTeamwork, g_botSpawnScale, g_botNavTuning (0/1)\n"
+    "  g_botHumanAimCone, g_botHumanReaction, g_botHumanTurnSpeed, g_botHumanFireDelay\n" );
 }
 
 qboolean G_BotConsoleCommand( void )
@@ -403,11 +489,29 @@ qboolean G_BotConsoleCommand( void )
   int i, count, skill, id, wanted, clients[ MAX_CLIENTS ], argc = trap_Argc( );
   qboolean all, bell = qfalse;
   trap_Argv( 0, command, sizeof( command ) );
+  if( !Q_stricmp( command, "botbench" ) ) return G_BotBenchmarkConsoleCommand( );
   if( !Q_stricmp( command, "botnav" ) ) return G_BotNavConsoleCommand( command );
   if( Q_stricmp( command, "bot" ) ) return qfalse;
   trap_Argv( 1, action, sizeof( action ) );
   trap_Argv( 2, arg, sizeof( arg ) );
   trap_Argv( 3, value, sizeof( value ) );
+  if( !Q_stricmp( action, "tactics" ) )
+  {
+    int waves, rallied, dispatches, focus, members, peak, orders, active;
+    G_Printf( "bot tactics: teamwork %d combat tuning %d spawn scaling %d\n",
+              g_botTeamwork.integer, g_botCombatTuning.integer, g_botSpawnScale.integer );
+    for( i = TEAM_ALIENS; i <= TEAM_HUMANS; i++ )
+    {
+      G_BotTeamMetrics( i, &waves, &rallied, &dispatches, &focus );
+      G_BotTeamCohortMetrics( i, &members, &peak, &orders, &active );
+      G_Printf( "%s: waves %d launched %d peak group %d active %d rallying %d "
+                "advance orders %d defense dispatches %d focus %d desired spawns %d queued %d\n",
+        BG_TeamName( i ), waves, members, peak, active, rallied, orders, dispatches, focus,
+        G_BotBuildDemand( i ), G_GetSpawnQueueLength( i == TEAM_HUMANS ?
+          &level.humanSpawnQueue : &level.alienSpawnQueue ) );
+    }
+    return qtrue;
+  }
   if( !Q_stricmp( action, "buildings" ) )
   {
     for( i = MAX_CLIENTS; i < level.num_entities; i++ )
@@ -454,25 +558,7 @@ qboolean G_BotConsoleCommand( void )
         !BotNumber( value, 0, level.maxclients, &wanted ) ) { BotHelp( ); return qtrue; }
     trap_Argv( 4, value, sizeof( value ) );
     if( argc > 4 && !BotSkill( value, &skill, &bell ) ) { BotHelp( ); return qtrue; }
-    count = 0;
-    for( i = 0; i < level.maxclients; i++ )
-      if( G_BotIsBot( i ) && g_botStates[ i ].team == team ) count++;
-    for( i = level.maxclients - 1; count > wanted && i >= 0; i-- )
-      if( G_BotIsBot( i ) && g_botStates[ i ].team == team )
-      { trap_DropClient( i, "bot fill" ); count--; }
-    while( count < wanted )
-    {
-      if( !BotAdd( team, bell ? BotBellRandomSkill( ) : skill, "",
-                   count == 0 ? BOT_BUILD : BOT_ATTACK ) ) break;
-      count++;
-    }
-    if( bell )
-    {
-      count = 0;
-      for( i = 0; i < level.maxclients; i++ )
-        if( G_BotIsBot( i ) && g_botStates[ i ].team == team ) clients[ count++ ] = i;
-      BotAssignBellSkills( clients, count );
-    }
+    G_BotFillTeam( team, wanted, skill, bell );
     return qtrue;
   }
   all = !Q_stricmp( arg, "all" );

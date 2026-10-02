@@ -22,6 +22,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 
 #include "g_local.h"
+#include "g_bot.h"
 
 /*
 ================
@@ -3705,6 +3706,7 @@ static gentity_t *G_Build( gentity_t *builder, buildable_t buildable,
 
   if( builder && builder->client )
   {
+    G_BotBenchmarkConstruct( builder, built );
     G_TeamCommand( builder->client->ps.stats[ STAT_TEAM ],
       va( "print \"%s ^2built^7 by %s%s%s\n\"",
         BG_Buildable( built->s.modelindex )->humanName,

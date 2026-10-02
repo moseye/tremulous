@@ -12,6 +12,89 @@ void G_SellItem( gentity_t *ent, const char *name );
 void Cmd_Reload_f( gentity_t *ent );
 qboolean G_RoomForClassChange( gentity_t *ent, class_t class, vec3_t newOrigin );
 
+vmCvar_t g_botCombatTuning;
+static vmCvar_t botHumanAimCone, botHumanReaction, botHumanTurnSpeed;
+static vmCvar_t botHumanFireDelay;
+
+typedef struct
+{
+  int spawnCount, enterTime, target, nextAimSample, lastAimTime;
+  int burstUntil, nextBurstTime, retreatUntil;
+  team_t team;
+  qboolean retreatEvolve;
+  unsigned int randomState;
+  float yawError, pitchError;
+} botCombatState_t;
+
+static botCombatState_t botCombatStates[ MAX_CLIENTS ];
+static unsigned int botCombatSeed;
+
+static const class_t botAttackClasses[ ] =
+{
+  PCL_ALIEN_LEVEL4, PCL_ALIEN_LEVEL3_UPG, PCL_ALIEN_LEVEL3,
+  PCL_ALIEN_LEVEL2_UPG, PCL_ALIEN_LEVEL2, PCL_ALIEN_LEVEL1_UPG,
+  PCL_ALIEN_LEVEL1
+};
+
+void G_BotCombatInit( void )
+{
+  char seed[ 32 ];
+  memset( botCombatStates, 0, sizeof( botCombatStates ) );
+  trap_Cvar_Register( &g_botCombatTuning, "g_botCombatTuning", "0", CVAR_ARCHIVE );
+  trap_Cvar_Register( &botHumanAimCone, "g_botHumanAimCone", "3", CVAR_ARCHIVE );
+  trap_Cvar_Register( &botHumanReaction, "g_botHumanReaction", "300", CVAR_ARCHIVE );
+  trap_Cvar_Register( &botHumanTurnSpeed, "g_botHumanTurnSpeed", "240", CVAR_ARCHIVE );
+  trap_Cvar_Register( &botHumanFireDelay, "g_botHumanFireDelay", "160", CVAR_ARCHIVE );
+  trap_Cvar_VariableStringBuffer( "sv_simulationSeed", seed, sizeof( seed ) );
+  botCombatSeed = (unsigned int)atoi( seed ) ^ 0x9e3779b9u;
+}
+
+void G_BotCombatFrame( void )
+{
+  trap_Cvar_Update( &g_botCombatTuning );
+  trap_Cvar_Update( &botHumanAimCone );
+  trap_Cvar_Update( &botHumanReaction );
+  trap_Cvar_Update( &botHumanTurnSpeed );
+  trap_Cvar_Update( &botHumanFireDelay );
+}
+
+/* A private, reproducible generator avoids consuming the game's random stream
+ * whenever a human acquires a fresh aim error. Native and QVM use 32-bit ints. */
+static float BotCombatRandom( botCombatState_t *state )
+{
+  state->randomState = state->randomState * 1664525u + 1013904223u;
+  return ( state->randomState >> 8 ) * ( 1.0f / 16777216.0f );
+}
+
+static botCombatState_t *BotCombatState( gentity_t *ent, botState_t *bot )
+{
+  botCombatState_t *state = &botCombatStates[ ent->s.number ];
+  int spawnCount = ent->client->ps.persistant[ PERS_SPAWN_COUNT ];
+  if( state->spawnCount != spawnCount || state->team != bot->team ||
+      state->enterTime != ent->client->pers.enterTime )
+  {
+    memset( state, 0, sizeof( *state ) );
+    state->spawnCount = spawnCount;
+    state->enterTime = ent->client->pers.enterTime;
+    state->team = bot->team;
+    state->target = -1;
+    state->lastAimTime = level.time;
+    state->randomState = botCombatSeed ^
+      ( (unsigned int)( ent->s.number + 1 ) * 2654435761u ) ^
+      ( (unsigned int)spawnCount * 2246822519u );
+  }
+  return state;
+}
+
+qboolean G_BotCanDamageTarget( gentity_t *ent, gentity_t *target )
+{
+  if( !target ) return qfalse;
+  if( !g_botCombatTuning.integer ) return qtrue;
+  /* Normal dretch bites only damage players and unfinished buildings. */
+  return !( ent->client->ps.weapon == WP_ALEVEL0 &&
+            target->s.eType == ET_BUILDABLE && target->spawned );
+}
+
 static qboolean BotEnemy( gentity_t *ent, gentity_t *other )
 {
   if( !other->inuse || other == ent || other->health <= 0 ||
@@ -57,12 +140,18 @@ static gentity_t *BotSelectTarget( gentity_t *ent, botState_t *bot )
   vec3_t delta;
   gentity_t *other, *best = NULL;
 
+  if( g_botCombatTuning.integer && bot->role == BOT_BUILD )
+    range = G_BotBuildPriority( bot->team ) ? 250.0f : 400.0f;
+
   if( level.time < bot->nextEnemyScan )
   {
     if( bot->target >= 0 && bot->target < level.num_entities )
     {
       other = &g_entities[ bot->target ];
-      if( BotEnemy( ent, other ) && BotVisible( ent, other ) )
+      if( BotEnemy( ent, other ) && G_BotCanDamageTarget( ent, other ) &&
+          ( !g_botCombatTuning.integer ||
+            DistanceSquared( ent->r.currentOrigin, other->r.currentOrigin ) <= range * range ) &&
+          BotVisible( ent, other ) )
         return other;
     }
     bot->target = -1;
@@ -73,7 +162,7 @@ static gentity_t *BotSelectTarget( gentity_t *ent, botState_t *bot )
   for( i = 0; i < level.num_entities; i++ )
   {
     other = &g_entities[ i ];
-    if( !BotEnemy( ent, other ) )
+    if( !BotEnemy( ent, other ) || !G_BotCanDamageTarget( ent, other ) )
       continue;
 
     VectorSubtract( other->r.currentOrigin, ent->r.currentOrigin, delta );
@@ -90,6 +179,8 @@ static gentity_t *BotSelectTarget( gentity_t *ent, botState_t *bot )
              other->s.modelindex == BA_H_REACTOR )
       score += 150.0f;
 
+    score += G_BotTeamTargetBonus( ent, other );
+
     /* Keep a target until another is clearly more urgent. */
     if( i == bot->target )
       score += 180.0f;
@@ -101,7 +192,13 @@ static gentity_t *BotSelectTarget( gentity_t *ent, botState_t *bot )
   }
 
   if( best && bot->target != best->s.number )
-    bot->aimTime = level.time + 80 + ( 10 - bot->skill ) * 45;
+  {
+    if( g_botCombatTuning.integer && bot->team == TEAM_HUMANS )
+      bot->aimTime = level.time + (int)( Com_Clamp( 0.0f, 2000.0f,
+        botHumanReaction.value ) * ( 1.6f - bot->skill * 0.1f ) );
+    else
+      bot->aimTime = level.time + 80 + ( 10 - bot->skill ) * 45;
+  }
   bot->target = best ? best->s.number : -1;
   return best;
 }
@@ -152,6 +249,230 @@ static float BotPreferredRange( weapon_t weapon )
   }
 }
 
+/* Pounce adds velocity along the view direction; it does not supply an
+ * independent upward jump. Use a low launch arc instead of aiming below the
+ * dragoon's eye and immediately colliding with the floor. During flight the
+ * normal target aim returns, allowing the automatic pounce hit trace to work. */
+static void BotPounceAim( gentity_t *ent, weapon_t weapon,
+                          const vec3_t point, vec3_t aim )
+{
+  vec3_t eye, direction;
+  float distance, charge, speed, carry, angle, flight, vertical, sine;
+  int i;
+
+  BG_GetClientViewOrigin( &ent->client->ps, eye );
+  VectorSubtract( point, eye, direction );
+  direction[ 2 ] = 0.0f;
+  distance = VectorNormalize( direction );
+  if( distance < 1.0f ) return;
+  charge = ent->client->ps.stats[ STAT_MISC ] /
+    (float)( weapon == WP_ALEVEL3 ? LEVEL3_POUNCE_TIME : LEVEL3_POUNCE_TIME_UPG );
+  charge = Com_Clamp( 0.8f, 1.0f, charge );
+  speed = charge * ( weapon == WP_ALEVEL3 ? LEVEL3_POUNCE_JUMP_MAG :
+                                           LEVEL3_POUNCE_JUMP_MAG_UPG );
+  carry = MAX( 0.0f, DotProduct( ent->client->ps.velocity, direction ) );
+  angle = DEG2RAD( 15.0f );
+  /* A bounded solve includes existing forward momentum. Long attacks beyond
+   * the available launch speed use a 45-degree closing leap rather than an
+   * impossible exact interception. All motion still goes through Pmove. */
+  for( i = 0; i < 5; i++ )
+  {
+    flight = distance / MAX( 1.0f, carry + speed * cos( angle ) );
+    vertical = ( point[ 2 ] - ent->client->ps.origin[ 2 ] +
+      0.5f * g_gravity.value * flight * flight ) / flight -
+      ent->client->ps.velocity[ 2 ];
+    sine = Com_Clamp( 0.17f, 0.7071f, vertical / speed );
+    angle = atan2( sine, sqrt( 1.0f - sine * sine ) );
+  }
+  aim[ 2 ] = eye[ 2 ] + distance * sin( angle ) / cos( angle );
+}
+
+static void BotHumanAim( gentity_t *ent, botState_t *bot, usercmd_t *cmd,
+                          const vec3_t point )
+{
+  botCombatState_t *state = BotCombatState( ent, bot );
+  vec3_t eye, direction, angles, aim;
+  float radius, phase, cone, distance, step, turn;
+  int i, elapsed;
+
+  if( state->target != bot->target )
+  {
+    state->target = bot->target;
+    state->nextAimSample = state->burstUntil = 0;
+    state->nextBurstTime = bot->aimTime;
+  }
+  if( level.time >= state->nextAimSample )
+  {
+    /* Uniform disk in angle space: the cone stays meaningful at long range.
+     * Holding the error briefly models imperfect tracking rather than shaking
+     * the crosshair independently for every shot. */
+    cone = Com_Clamp( 0.0f, 15.0f, botHumanAimCone.value ) *
+           ( 1.9f - 0.16f * bot->skill );
+    radius = sqrt( BotCombatRandom( state ) ) * cone;
+    phase = BotCombatRandom( state ) * 2.0f * M_PI;
+    state->yawError = cos( phase ) * radius;
+    state->pitchError = sin( phase ) * radius;
+    state->nextAimSample = level.time + 250 +
+                          (int)( BotCombatRandom( state ) * 250.0f );
+  }
+  BG_GetClientViewOrigin( &ent->client->ps, eye );
+  VectorSubtract( point, eye, direction );
+  distance = VectorLength( direction );
+  vectoangles( direction, angles );
+  angles[ YAW ] += state->yawError;
+  angles[ PITCH ] += state->pitchError;
+  AngleVectors( angles, direction, NULL, NULL );
+  VectorMA( eye, distance, direction, aim );
+  G_BotAim( ent, cmd, aim );
+
+  elapsed = level.time - state->lastAimTime;
+  if( elapsed < 25 ) elapsed = 25;
+  if( elapsed > 250 ) elapsed = 250;
+  step = Com_Clamp( 30.0f, 720.0f, botHumanTurnSpeed.value ) *
+         ( 0.55f + bot->skill * 0.1f ) * elapsed / 1000.0f;
+  for( i = PITCH; i <= YAW; i++ )
+  {
+    turn = AngleSubtract( SHORT2ANGLE( cmd->angles[ i ] +
+      ent->client->ps.delta_angles[ i ] ), ent->client->ps.viewangles[ i ] );
+    angles[ i ] = ent->client->ps.viewangles[ i ] + Com_Clamp( -step, step, turn );
+    cmd->angles[ i ] = ANGLE2SHORT( angles[ i ] ) -
+                      ent->client->ps.delta_angles[ i ];
+  }
+  state->lastAimTime = level.time;
+}
+
+static qboolean BotHumanFireReady( gentity_t *ent, botState_t *bot,
+                                   weapon_t weapon, float melee )
+{
+  botCombatState_t *state = BotCombatState( ent, bot );
+  int delay;
+
+  /* Hold a melee weapon normally; its range already restricts firing. */
+  if( melee > 0.0f ) return qtrue;
+  if( state->burstUntil > 0 && level.time >= state->burstUntil )
+  {
+    delay = (int)( Com_Clamp( 0.0f, 1500.0f, botHumanFireDelay.value ) *
+                   ( 1.6f - bot->skill * 0.1f ) *
+                   ( 0.8f + 0.4f * BotCombatRandom( state ) ) );
+    state->nextBurstTime = level.time + delay;
+    state->burstUntil = 0;
+  }
+  if( level.time < state->nextBurstTime ) return qfalse;
+  if( !state->burstUntil )
+    state->burstUntil = level.time + ( weapon == WP_LUCIFER_CANNON ?
+      LCANNON_CHARGE_TIME_WARN + 100 : 260 + bot->skill * 45 );
+  return qtrue;
+}
+
+static qboolean BotCanUpgradeClass( gentity_t *ent )
+{
+  class_t current = ent->client->pers.classSelection;
+  vec3_t origin;
+  int i;
+
+  if( !G_Overmind( ) ) return qfalse;
+  for( i = 0; i < sizeof( botAttackClasses ) / sizeof( botAttackClasses[ 0 ] ); i++ )
+  {
+    if( current == botAttackClasses[ i ] ) return qfalse;
+    if( BG_ClassIsAllowed( botAttackClasses[ i ] ) &&
+        BG_ClassCanEvolveFromTo( current, botAttackClasses[ i ],
+          ent->client->pers.credit, g_alienStage.integer, 0 ) >= 0 &&
+        G_RoomForClassChange( ent, botAttackClasses[ i ], origin ) )
+      return qtrue;
+  }
+  return qfalse;
+}
+
+qboolean G_BotCombatRetreat( gentity_t *ent, botState_t *bot, usercmd_t *cmd )
+{
+  botCombatState_t *state;
+  gentity_t *service = NULL, *other;
+  vec3_t goal, direction;
+  float health, distance;
+  qboolean evolve = qfalse, threatened = qfalse;
+  int i;
+
+  if( !g_botCombatTuning.integer ) return qfalse;
+  state = BotCombatState( ent, bot );
+  health = (float)ent->health / ent->client->ps.stats[ STAT_MAX_HEALTH ];
+  if( bot->team == TEAM_ALIENS && bot->role != BOT_BUILD &&
+      BotCanUpgradeClass( ent ) )
+  {
+    /* Only visible opponents trigger an evolution retreat. The actual class
+     * change still goes through all ordinary proximity and room checks. */
+    for( i = 0; i < level.num_entities; i++ )
+    {
+      other = &g_entities[ i ];
+      if( !BotEnemy( ent, other ) ||
+          ( !other->client && ( other->s.eType != ET_BUILDABLE || !other->powered ) ) ||
+          DistanceSquared( ent->r.currentOrigin, other->r.currentOrigin ) > 600.0f * 600.0f ||
+          !BotVisible( ent, other ) )
+        continue;
+      evolve = qtrue;
+      break;
+    }
+  }
+  if( health < 0.35f || ( state->retreatUntil && health < 0.70f ) )
+    state->retreatUntil = level.time + 1800;
+  if( evolve )
+  {
+    state->retreatEvolve = qtrue;
+    /* Include a complete normal 2.5-second evolution retry interval. */
+    state->retreatUntil = level.time + 3000;
+  }
+  if( state->retreatUntil <= level.time )
+  {
+    state->retreatUntil = 0;
+    state->retreatEvolve = qfalse;
+    return qfalse;
+  }
+
+  if( bot->team == TEAM_ALIENS )
+  {
+    service = G_BotFindBuildable( ent, BA_A_BOOSTER, 0 );
+    if( !service ) service = G_BotFindBuildable( ent, BA_A_OVERMIND, 0 );
+  }
+  else
+    service = G_BotFindBuildable( ent, BA_H_MEDISTAT, 0 );
+  if( !service ) return qfalse;
+
+  /* Do not abandon an immediately adjacent opponent when retreat has already
+   * reached the heal point: fight while keeping the existing service route. */
+  distance = Distance( ent->r.currentOrigin, service->r.currentOrigin );
+  if( distance < 160.0f )
+  {
+    for( i = 0; i < level.maxclients; i++ )
+      if( BotEnemy( ent, &g_entities[ i ] ) &&
+          DistanceSquared( ent->r.currentOrigin, g_entities[ i ].r.currentOrigin ) <
+            130.0f * 130.0f && BotVisible( ent, &g_entities[ i ] ) )
+      {
+        threatened = qtrue;
+        break;
+      }
+    if( threatened ) return qfalse;
+  }
+
+  VectorCopy( service->r.currentOrigin, goal );
+  if( service->s.modelindex == BA_H_MEDISTAT &&
+      ( !service->enemy || service->enemy == ent ) )
+    goal[ 2 ] += service->r.maxs[ 2 ] - ent->r.mins[ 2 ] + 1.0f;
+  else
+  {
+    VectorSubtract( ent->r.currentOrigin, service->r.currentOrigin, direction );
+    direction[ 2 ] = 0.0f;
+    if( VectorNormalize( direction ) == 0.0f ) VectorSet( direction, 1, 0, 0 );
+    VectorMA( goal, MAX( service->r.maxs[ 0 ], service->r.maxs[ 1 ] ) + 80.0f,
+              direction, goal );
+  }
+  G_BotNavMove( ent, bot, goal, cmd, qtrue );
+  /* Release hold-to-climb once back on a floor so normal evolution can occur. */
+  if( bot->team == TEAM_ALIENS && state->retreatEvolve &&
+      ent->client->ps.grapplePoint[ 2 ] > 0.7f && cmd->upmove < 0 )
+    cmd->upmove = 0;
+  bot->target = -1;
+  return qtrue;
+}
+
 static qboolean BotSafeShot( gentity_t *ent, gentity_t *enemy,
                              usercmd_t *cmd, float range )
 {
@@ -185,7 +506,8 @@ static qboolean BotSafeShot( gentity_t *ent, gentity_t *enemy,
   if( hit->s.eType == ET_BUILDABLE &&
       hit->buildableTeam == ent->client->pers.teamSelection )
     return qfalse;
-  return tr.fraction == 1.0f || BotEnemy( ent, hit );
+  /* Friendly fire safety must not predict ordinary misses against a wall. */
+  return g_botCombatTuning.integer || tr.fraction == 1.0f || BotEnemy( ent, hit );
 }
 
 qboolean G_BotCombatThink( gentity_t *ent, botState_t *bot, usercmd_t *cmd )
@@ -243,6 +565,18 @@ qboolean G_BotCombatThink( gentity_t *ent, botState_t *bot, usercmd_t *cmd )
     attack = BUTTON_USE_HOLDABLE;
   }
 
+  if( g_botCombatTuning.integer && enemy->s.eType == ET_BUILDABLE &&
+      melee > 0.0f && !barb )
+  {
+    /* Fire at the face used by the range test. Aiming at a large structure's
+     * centre can put its ray intersection beyond claw range even when its
+     * nearest corner is already close enough. */
+    for( i = 0; i < 3; i++ )
+      point[ i ] = Com_Clamp( enemy->r.currentOrigin[ i ] + enemy->r.mins[ i ] + 1.0f,
+        enemy->r.currentOrigin[ i ] + enemy->r.maxs[ i ] - 1.0f, eye[ i ] );
+    distance = Distance( eye, point );
+  }
+
   VectorCopy( point, aim );
   speed = BotProjectileSpeed( weapon, barb );
   if( speed > 0.0f && enemy->client )
@@ -258,13 +592,24 @@ qboolean G_BotCombatThink( gentity_t *ent, botState_t *bot, usercmd_t *cmd )
     if( time > 1.2f ) time = 1.2f;
     aim[ 2 ] += 0.5f * g_gravity.value * time * time;
   }
-  error = distance * ( 11 - bot->skill ) * 0.0018f;
-  if( error > 45.0f ) error = 45.0f;
-  for( i = 0; i < 3; i++ )
-    aim[ i ] += crandom( ) * error;
-  G_BotAim( ent, cmd, aim );
+  if( g_botCombatTuning.integer && !bot->rallying && !barb &&
+      ( weapon == WP_ALEVEL3 || weapon == WP_ALEVEL3_UPG ) &&
+      !( ps->pm_flags & PMF_CHARGE ) && ps->groundEntityNum != ENTITYNUM_NONE &&
+      distance > 130.0f && distance < 700.0f &&
+      level.time >= bot->aimTime && ps->weaponTime <= 0 )
+    BotPounceAim( ent, weapon, point, aim );
+  if( g_botCombatTuning.integer && bot->team == TEAM_HUMANS )
+    BotHumanAim( ent, bot, cmd, aim );
+  else
+  {
+    error = distance * ( 11 - bot->skill ) * 0.0018f;
+    if( error > 45.0f ) error = 45.0f;
+    for( i = 0; i < 3; i++ )
+      aim[ i ] += crandom( ) * error;
+    G_BotAim( ent, cmd, aim );
+  }
 
-  G_BotNavMove( ent, bot, enemy->r.currentOrigin, cmd, qfalse );
+  if( !bot->rallying ) G_BotNavMove( ent, bot, enemy->r.currentOrigin, cmd, qfalse );
   if( melee > 0.0f && !barb )
   {
     if( edgeDistance < melee * 0.55f )
@@ -275,15 +620,26 @@ qboolean G_BotCombatThink( gentity_t *ent, botState_t *bot, usercmd_t *cmd )
     preferred = BotPreferredRange( weapon );
     if( distance < preferred * 1.25f )
     {
-      /* A visible opponent permits simple strafing without path detours. */
-      cmd->forwardmove = distance < preferred * 0.55f ? -80 : 0;
-      cmd->rightmove = ( ( level.time / 1600 + ent->s.number ) & 1 ) ? 80 : -80;
+      if( g_botCombatTuning.integer && enemy->s.eType == ET_BUILDABLE )
+      {
+        /* Stationary structures cannot be dodged. Use a stable firing site
+         * rather than circling the target or backing out of the assault. */
+        cmd->forwardmove = cmd->rightmove = cmd->upmove = 0;
+      }
+      else
+      {
+        /* A visible opponent permits simple strafing without path detours. */
+        cmd->forwardmove = distance < preferred * 0.55f ? -80 : 0;
+        cmd->rightmove = ( ( level.time / 1600 + ent->s.number ) & 1 ) ? 80 : -80;
+      }
       cmd->buttons &= ~BUTTON_SPRINT;
     }
   }
 
   canFire = level.time >= bot->aimTime &&
             BotSafeShot( ent, enemy, cmd, distance + 100.0f );
+  if( g_botCombatTuning.integer && bot->team == TEAM_HUMANS )
+    canFire = canFire && BotHumanFireReady( ent, bot, weapon, melee );
   if( weapon == WP_ALEVEL2_UPG && edgeDistance < LEVEL2_AREAZAP_RANGE )
   {
     attack = BUTTON_ATTACK2;
@@ -309,6 +665,8 @@ qboolean G_BotCombatThink( gentity_t *ent, botState_t *bot, usercmd_t *cmd )
   if( weapon == WP_ALEVEL3 || weapon == WP_ALEVEL3_UPG )
   {
     if( !barb && distance > 130.0f && distance < 700.0f &&
+        ( !g_botCombatTuning.integer || ( !bot->rallying &&
+          !( ps->pm_flags & PMF_CHARGE ) && ps->groundEntityNum != ENTITYNUM_NONE ) ) &&
         level.time >= bot->aimTime && ps->weaponTime <= 0 )
     {
       if( ps->stats[ STAT_MISC ] <
@@ -457,12 +815,6 @@ static void BotShop( gentity_t *ent, botState_t *bot )
 
 static void BotEvolve( gentity_t *ent, botState_t *bot )
 {
-  static const class_t attackClasses[ ] =
-  {
-    PCL_ALIEN_LEVEL4, PCL_ALIEN_LEVEL3_UPG, PCL_ALIEN_LEVEL3,
-    PCL_ALIEN_LEVEL2_UPG, PCL_ALIEN_LEVEL2, PCL_ALIEN_LEVEL1_UPG,
-    PCL_ALIEN_LEVEL1
-  };
   class_t current = ent->client->pers.classSelection, desired;
   int i;
 
@@ -476,9 +828,9 @@ static void BotEvolve( gentity_t *ent, botState_t *bot )
     return;
   }
 
-  for( i = 0; i < sizeof( attackClasses ) / sizeof( attackClasses[ 0 ] ); i++ )
+  for( i = 0; i < sizeof( botAttackClasses ) / sizeof( botAttackClasses[ 0 ] ); i++ )
   {
-    desired = attackClasses[ i ];
+    desired = botAttackClasses[ i ];
     /* Don't spend a life repeatedly switching between equally good classes. */
     if( desired == current )
       return;

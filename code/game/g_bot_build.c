@@ -36,10 +36,44 @@ typedef struct
 } botBuildPlan_t;
 
 static botBuildPlan_t botBuildPlans[ MAX_CLIENTS ];
+vmCvar_t g_botSpawnScale;
+
+void G_BotBuildFrame( void )
+{
+  trap_Cvar_Update( &g_botSpawnScale );
+}
+
+int G_BotBuildDemand( team_t team )
+{
+  int i, players = 0, wanted, queued;
+  if( !g_botSpawnScale.integer ) return 2;
+  for( i = 0; i < level.maxclients; i++ )
+    if( level.clients[ i ].pers.connected == CON_CONNECTED &&
+        level.clients[ i ].pers.teamSelection == team ) players++;
+  wanted = MAX( 2, ( players + 3 ) / 4 );
+  queued = G_GetSpawnQueueLength( team == TEAM_HUMANS ? &level.humanSpawnQueue : &level.alienSpawnQueue );
+  if( queued > wanted * 2 ) wanted++;
+  return MIN( 8, wanted );
+}
+
+qboolean G_BotBuildPriority( team_t team )
+{
+  int i, spawns = 0, cores = 0;
+  if( !g_botSpawnScale.integer ) return qfalse;
+  for( i = MAX_CLIENTS; i < level.num_entities; i++ )
+    if( g_entities[ i ].inuse && g_entities[ i ].s.eType == ET_BUILDABLE &&
+        g_entities[ i ].health > 0 && g_entities[ i ].buildableTeam == team )
+    {
+      if( g_entities[ i ].s.modelindex == BA_H_SPAWN || g_entities[ i ].s.modelindex == BA_A_SPAWN ) spawns++;
+      if( g_entities[ i ].s.modelindex == BA_H_REACTOR || g_entities[ i ].s.modelindex == BA_A_OVERMIND ) cores++;
+    }
+  return !cores || spawns < G_BotBuildDemand( team );
+}
 
 void G_BotBuildInit( void )
 {
   memset( botBuildPlans, 0, sizeof( botBuildPlans ) );
+  trap_Cvar_Register( &g_botSpawnScale, "g_botSpawnScale", "0", CVAR_ARCHIVE );
 }
 
 void G_BotBuildReset( int clientNum )
@@ -154,11 +188,12 @@ static qboolean BotBuildAllowed( gentity_t *ent, buildable_t type )
 static buildable_t BotBuildChoose( gentity_t *ent, const vec3_t anchor )
 {
   int counts[ BA_NUM_BUILDABLES ];
-  int points;
+  int points, desired;
   team_t team = ent->client->ps.stats[ STAT_TEAM ];
 
   BotBuildCounts( team, anchor, counts, ent->s.number );
   points = G_GetBuildPoints( anchor, team );
+  desired = G_BotBuildDemand( team );
 #define BOT_WANT( type, number ) \
   if( counts[ type ] < ( number ) && BotBuildAllowed( ent, type ) && \
       BG_Buildable( type )->buildPoints <= points ) return type
@@ -170,6 +205,8 @@ static buildable_t BotBuildChoose( gentity_t *ent, const vec3_t anchor )
     BOT_WANT( BA_H_SPAWN, 2 );
     BOT_WANT( BA_H_ARMOURY, 1 );
     BOT_WANT( BA_H_MEDISTAT, 1 );
+    BOT_WANT( BA_H_SPAWN, desired );
+    if( g_botSpawnScale.integer && counts[ BA_H_SPAWN ] < desired ) return BA_NONE;
     BOT_WANT( BA_H_MGTURRET, 2 );
     BOT_WANT( BA_H_DCC, 1 );
     BOT_WANT( BA_H_MGTURRET, 4 );
@@ -185,6 +222,8 @@ static buildable_t BotBuildChoose( gentity_t *ent, const vec3_t anchor )
     if( !counts[ BA_A_OVERMIND ] )
       return BA_NONE;
     BOT_WANT( BA_A_SPAWN, 2 );
+    BOT_WANT( BA_A_SPAWN, desired );
+    if( g_botSpawnScale.integer && counts[ BA_A_SPAWN ] < desired ) return BA_NONE;
     BOT_WANT( BA_A_ACIDTUBE, 2 );
     BOT_WANT( BA_A_BOOSTER, 1 );
     BOT_WANT( BA_A_TRAPPER, 1 );
@@ -246,6 +285,67 @@ static qboolean BotBuildReserved( team_t team, const vec3_t place, int clientNum
   return qfalse;
 }
 
+/* A legal blueprint can still leave a spawn wedged in a corner. Test the
+ * game's actual spawning volume, spacing and at least two supported exits.
+ * This is only a proposal check; the real builder and G_CanBuild remain final. */
+static float BotBuildSpawnScore( gentity_t *ent, buildable_t type, const vec3_t place )
+{
+  const vec3_t normal = { 0, 0, 1 };
+  vec3_t mins, maxs;
+  trace_t tr;
+  vec3_t spawn, start, end, floor, exitStart, exitEnd;
+  float angle, closest = 600.0f;
+  int i, exits = 0;
+  gentity_t *building;
+  if( G_CheckSpawnPoint( ENTITYNUM_NONE, place, normal, type, spawn ) ) return -1.0f;
+  BG_ClassBoundingBox( type == BA_H_SPAWN ? PCL_HUMAN : PCL_ALIEN_LEVEL0,
+                      mins, maxs, NULL, NULL, NULL );
+  for( i = MAX_CLIENTS; i < level.num_entities; i++ )
+  {
+    building = &g_entities[ i ];
+    if( !BotBuildAlive( building, ent->client->pers.teamSelection ) ) continue;
+    if( building->s.modelindex == BA_H_SPAWN || building->s.modelindex == BA_A_SPAWN )
+    {
+      float distance = Distance( place, building->r.currentOrigin );
+      if( distance < 176.0f ) return -1.0f;
+      if( distance < closest ) closest = distance;
+    }
+    else if( ( building->s.modelindex == BA_H_ARMOURY || building->s.modelindex == BA_H_MEDISTAT ) &&
+             DistanceSquared( place, building->r.currentOrigin ) < 140.0f * 140.0f ) return -1.0f;
+  }
+  VectorCopy( spawn, start );
+  /* Project exits to the floor rather than assuming clear air is walkable. */
+  for( i = 0; i < 8; i++ )
+  {
+    angle = i * M_PI * 0.25f;
+    VectorCopy( start, end );
+    end[ 0 ] += cos( angle ) * 152.0f;
+    end[ 1 ] += sin( angle ) * 152.0f;
+    trap_Trace( &tr, start, mins, maxs, end, ent->s.number, MASK_PLAYERSOLID );
+    if( tr.startsolid || tr.fraction < 0.85f ) continue;
+    VectorCopy( end, floor ); floor[ 2 ] -= 256.0f;
+    trap_Trace( &tr, end, mins, maxs, floor, ent->s.number, MASK_PLAYERSOLID );
+    if( tr.startsolid || tr.fraction == 1.0f || tr.plane.normal[ 2 ] < 0.7f ) continue;
+    VectorCopy( tr.endpos, exitEnd ); exitEnd[ 2 ] += 1.0f;
+    /* Eggs emit airborne players. Check the grounded part of the exit too so
+     * a clear trace over a low wall does not count as an accessible corridor. */
+    VectorCopy( spawn, exitStart );
+    exitStart[ 0 ] += cos( angle ) * 80.0f;
+    exitStart[ 1 ] += sin( angle ) * 80.0f;
+    VectorCopy( exitStart, floor ); floor[ 2 ] -= 256.0f;
+    trap_Trace( &tr, exitStart, mins, maxs, floor, ent->s.number, MASK_PLAYERSOLID );
+    if( tr.startsolid || tr.fraction == 1.0f || tr.plane.normal[ 2 ] < 0.7f ) continue;
+    VectorCopy( tr.endpos, exitStart ); exitStart[ 2 ] += 1.0f;
+    if( fabs( exitStart[ 2 ] - exitEnd[ 2 ] ) > 40.0f ) continue;
+    trap_Trace( &tr, exitStart, mins, maxs, exitEnd, ent->s.number, MASK_PLAYERSOLID );
+    if( tr.startsolid || tr.fraction < 1.0f ) continue;
+    VectorCopy( exitEnd, floor ); floor[ 2 ] += mins[ 2 ] + 8.0f;
+    if( trap_PointContents( floor, ent->s.number ) & ( CONTENTS_LAVA | CONTENTS_SLIME | CONTENTS_NODROP ) ) continue;
+    exits++;
+  }
+  return exits >= 2 ? exits * 25.0f + MIN( closest, 350.0f ) * 0.15f : -1.0f;
+}
+
 /* These traces propose a site and a reachable standing position only.
  * They never change ps.origin or substitute a fabricated player state for
  * G_CanBuild. The real build weapon performs the final placement checks. */
@@ -255,23 +355,27 @@ static qboolean BotBuildPlan( gentity_t *ent, botBuildPlan_t *plan,
   trace_t tr;
   vec3_t place, stand, from, end, outward;
   vec3_t buildMins, buildMaxs, playerMins, playerMaxs;
-  float angle, radius, score, bestScore = -1.0e20f, buildDist;
-  qboolean defence, found = qfalse;
-  int i;
+  float angle, radius, score, siteScore, bestScore = -1.0e20f, buildDist;
+  qboolean defence, spawn, found = qfalse;
+  int i, samples;
 
   defence = BotBuildDefence( type );
+  spawn = g_botSpawnScale.integer && ( type == BA_H_SPAWN || type == BA_A_SPAWN );
+  samples = spawn ? 20 : BOT_BUILD_SAMPLES;
   buildDist = BG_Class( ent->client->ps.stats[ STAT_CLASS ] )->buildDist;
   BG_BuildableBoundingBox( type, buildMins, buildMaxs );
   BG_ClassBoundingBox( ent->client->ps.stats[ STAT_CLASS ], playerMins, playerMaxs,
                       NULL, NULL, NULL );
 
-  for( i = 0; i < BOT_BUILD_SAMPLES; i++ )
+  for( i = 0; i < samples; i++ )
   {
     angle = random( ) * 2.0f * M_PI;
     /* Random inner utility placements; defences favour the outer base rim.
      * Some closer samples allow small rooms to acquire defences as well. */
     if( defence )
       radius = i < 4 ? 350.0f + random( ) * 280.0f : 210.0f + random( ) * 160.0f;
+    else if( spawn )
+      radius = 200.0f + random( ) * 240.0f;
     else
       radius = 170.0f + random( ) * 170.0f;
     VectorSet( outward, cos( angle ), sin( angle ), 0.0f );
@@ -290,6 +394,8 @@ static qboolean BotBuildPlan( gentity_t *ent, botBuildPlan_t *plan,
     trap_Trace( &tr, place, buildMins, buildMaxs, place, ent->s.number, MASK_PLAYERSOLID );
     if( tr.startsolid || tr.allsolid )
       continue;
+    siteScore = spawn ? BotBuildSpawnScore( ent, type, place ) : 0.0f;
+    if( siteScore < 0.0f ) continue;
 
     /* Keep this base's structures on its side of the room's walls. */
     VectorCopy( anchor, from );
@@ -312,6 +418,7 @@ static qboolean BotBuildPlan( gentity_t *ent, botBuildPlan_t *plan,
     VectorCopy( tr.endpos, stand );
     stand[ 2 ] += 1.0f;
     score = defence ? BotBuildChokeScore( ent, place, outward ) : random( ) * 20.0f;
+    if( spawn ) score += siteScore;
     score -= Distance( ent->client->ps.origin, stand ) * 0.025f;
     if( score > bestScore )
     {
@@ -485,7 +592,9 @@ qboolean G_BotBuildThink( gentity_t *ent, botState_t *bot, usercmd_t *cmd )
   reason = G_CanBuild( ent, plan->type,
     BG_Class( ps->stats[ STAT_CLASS ] )->buildDist, origin, normal );
   if( reason == IBE_NONE && level.numBuildablesForRemoval == 0 &&
-      DistanceSquared( origin, plan->place ) < 48.0f * 48.0f )
+      DistanceSquared( origin, plan->place ) < 48.0f * 48.0f &&
+      ( !g_botSpawnScale.integer || ( plan->type != BA_H_SPAWN && plan->type != BA_A_SPAWN ) ||
+        BotBuildSpawnScore( ent, plan->type, origin ) >= 0.0f ) )
   {
     ps->stats[ STAT_BUILDABLE ] = plan->type | SB_VALID_TOGGLEBIT;
     cmd->buttons |= BUTTON_ATTACK;
