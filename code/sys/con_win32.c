@@ -193,10 +193,14 @@ static void CON_Show( void )
 	CHAR_INFO line[ MAX_EDIT_LINE ];
 	WORD attrib;
 
-	GetConsoleScreenBufferInfo( qconsole_hout, &binfo );
-
 	// if we're in the middle of printf, don't bother writing the buffer
 	if( !qconsole_drawinput )
+		return;
+
+	// A dedicated server may redirect stdout to a file or have no console.
+	// In that case the query leaves binfo untouched; never use those fields
+	// to calculate a source pointer for WriteConsoleOutput.
+	if( !GetConsoleScreenBufferInfo( qconsole_hout, &binfo ) )
 		return;
 
 	writeArea.Left = 0;
@@ -225,6 +229,9 @@ static void CON_Show( void )
 
 	if( qconsole_linelen > binfo.srWindow.Right )
 	{
+		// The shifted source contains fewer than MAX_EDIT_LINE characters.
+		// Tell Windows its actual width so it cannot read beyond line[].
+		writeSize.X -= qconsole_linelen - binfo.srWindow.Right;
 		WriteConsoleOutput( qconsole_hout, 
 			line + (qconsole_linelen - binfo.srWindow.Right ),
 			writeSize, writePos, &writeArea );
@@ -309,8 +316,10 @@ void CON_Init( void )
 
 	FlushConsoleInputBuffer( qconsole_hin ); 
 
-	GetConsoleScreenBufferInfo( qconsole_hout, &info );
-	qconsole_attrib = info.wAttributes;
+	if( GetConsoleScreenBufferInfo( qconsole_hout, &info ) )
+		qconsole_attrib = info.wAttributes;
+	else
+		qconsole_attrib = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE;
 	qconsole_backgroundAttrib = qconsole_attrib & (BACKGROUND_BLUE|BACKGROUND_GREEN|BACKGROUND_RED|BACKGROUND_INTENSITY);
 
 	SetConsoleTitle(CLIENT_WINDOW_TITLE " Dedicated Server Console");

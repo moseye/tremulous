@@ -23,11 +23,26 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "g_local.h"
 
-// this file is only included when building a dll
-// g_syscalls.asm is included instead when building a qvm
-
+// Native modules use this entry point; QVMs use g_syscalls.asm.
 static intptr_t (QDECL *syscall)( intptr_t arg, ... ) = (intptr_t (QDECL *)( intptr_t, ...))-1;
 
+int trap_BotAllocateClient( void )
+{
+  return syscall( G_BOT_ALLOCATE_CLIENT );
+}
+
+qboolean trap_BotIsClient( int clientNum )
+{
+  return syscall( G_BOT_IS_CLIENT, clientNum );
+}
+
+void trap_BotSetUsercmd( int clientNum, const usercmd_t *cmd )
+{
+  syscall( G_BOT_SET_USERCMD, clientNum, cmd );
+}
+
+// this file is only included when building a dll
+// g_syscalls.asm is included instead when building a qvm
 
 Q_EXPORT void dllEntry( intptr_t (QDECL *syscallptr)( intptr_t arg,... ) )
 {

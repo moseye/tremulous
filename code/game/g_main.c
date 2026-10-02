@@ -22,6 +22,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 
 #include "g_local.h"
+#include "g_bot.h"
 
 level_locals_t  level;
 
@@ -676,6 +677,7 @@ void G_InitGame( int levelTime, int randomSeed, int restart )
     level.humanTeamLocked = qtrue;
     trap_Cvar_Set( "g_lockTeamsAtStart", "0" );
   }
+  G_BotInit( );
 }
 
 /*
@@ -703,6 +705,7 @@ G_ShutdownGame
 */
 void G_ShutdownGame( int restart )
 {
+  G_BotShutdown( );
   // in case of a map_restart
   G_ClearVotes( );
 
@@ -1439,13 +1442,16 @@ void CalculateRanks( void )
       level.numConnectedClients++;
       P[ i ] = (char)'0' + level.clients[ i ].pers.teamSelection;
 
-      level.numVotingClients[ TEAM_NONE ]++;
+      if( !G_BotIsBot( i ) )
+        level.numVotingClients[ TEAM_NONE ]++;
 
       if( level.clients[ i ].pers.connected != CON_CONNECTED )
         continue;
 
       if( level.clients[ i ].pers.teamSelection != TEAM_NONE )
       {
+        if( !G_BotIsBot( i ) )
+          level.numVotingClients[ level.clients[ i ].pers.teamSelection ]++;
         level.numPlayingClients++;
         if( level.clients[ i ].pers.teamSelection == TEAM_ALIENS )
         {
@@ -1464,8 +1470,6 @@ void CalculateRanks( void )
   }
   level.numNonSpectatorClients = level.numLiveAlienClients +
     level.numLiveHumanClients;
-  level.numVotingClients[ TEAM_ALIENS ] = level.numAlienClients;
-  level.numVotingClients[ TEAM_HUMANS ] = level.numHumanClients;
   P[ i ] = '\0';
   trap_Cvar_Set( "P", P );
 
@@ -1918,7 +1922,7 @@ void CheckIntermissionExit( void )
   {
     cl = level.clients + i;
 
-    if( cl->pers.connected != CON_CONNECTED )
+    if( cl->pers.connected != CON_CONNECTED || G_BotIsBot( i ) )
       continue;
 
     if( cl->ps.stats[ STAT_TEAM ] == TEAM_NONE )
@@ -2373,6 +2377,7 @@ void G_RunFrame( int levelTime )
   CheckCvars( );
   // now we are done spawning
   level.spawning = qfalse;
+  G_BotFrame( );
 
   //
   // go through all allocated objects

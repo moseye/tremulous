@@ -643,6 +643,7 @@ void SV_SendClientMessages(void)
 	for(i=0; i < sv_maxclients->integer; i++)
 	{
 		c = &svs.clients[i];
+		if (c->isBot) continue;
 		
 		if(!c->state)
 			continue;		// not connected

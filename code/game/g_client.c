@@ -22,6 +22,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 
 #include "g_local.h"
+#include "g_bot.h"
 
 // g_client.c -- client functions that don't happen every frame
 
@@ -1068,7 +1069,7 @@ char *ClientConnect( int clientNum, qboolean firstTime )
   client->pers.admin = G_admin_admin( client->pers.guid );
 
   // check for admin ban
-  if( G_admin_ban_check( ent, reason, sizeof( reason ) ) )
+  if( !G_BotIsBot( clientNum ) && G_admin_ban_check( ent, reason, sizeof( reason ) ) )
   {
     return va( "%s", reason );
   }
@@ -1076,7 +1077,7 @@ char *ClientConnect( int clientNum, qboolean firstTime )
   // check for a password
   value = Info_ValueForKey( userinfo, "password" );
 
-  if( g_password.string[ 0 ] && Q_stricmp( g_password.string, "none" ) &&
+  if( !G_BotIsBot( clientNum ) && g_password.string[ 0 ] && Q_stricmp( g_password.string, "none" ) &&
       strcmp( g_password.string, value ) != 0 )
     return "Invalid password";
 
@@ -1531,6 +1532,8 @@ void ClientDisconnect( int clientNum )
   gentity_t *ent;
   gentity_t *tent;
   int       i;
+
+  G_BotDisconnect( clientNum );
 
   ent = g_entities + clientNum;
 

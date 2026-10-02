@@ -55,6 +55,10 @@ equ trap_SendGameStat                 -49
 equ trap_AddCommand                   -50
 equ trap_RemoveCommand                -51
 
+equ trap_BotAllocateClient            -52
+equ trap_BotIsClient                  -53
+equ trap_BotSetUsercmd                -54
+
 equ memset                            -101
 equ memcpy                            -102
 equ strncpy                           -103

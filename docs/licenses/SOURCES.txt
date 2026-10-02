@@ -1,0 +1,57 @@
+Third-party notices for the portable Windows x64 Release build
+
+This software is based in part on the work of the Independent JPEG Group.
+This product includes software developed by the University of California,
+Berkeley and its contributors.
+
+The client contains Ogg, Vorbis, Opus, opusfile and zlib code. The dedicated
+server contains zlib code. Both renderers contain JPEG code. The client and
+renderers use the bundled SDL2 2.32.8 runtime; its file version was checked.
+These dependencies were checked against build-bots-msvc/CMakeCache.txt and
+the Release link command records. Retrieved notices preserve upstream bytes.
+
+libogg-1.3.6-COPYING.txt
+  https://raw.githubusercontent.com/xiph/ogg/v1.3.6/COPYING
+libvorbis-1.3.7-COPYING.txt
+  https://raw.githubusercontent.com/xiph/vorbis/v1.3.7/COPYING
+opus-1.5.2-COPYING.txt
+  https://raw.githubusercontent.com/xiph/opus/v1.5.2/COPYING
+opusfile-0.12-COPYING.txt
+  https://raw.githubusercontent.com/xiph/opusfile/v0.12/COPYING
+SDL2-2.32.8-LICENSE.txt
+  https://raw.githubusercontent.com/libsdl-org/SDL/release-2.32.8/LICENSE.txt
+SDL2-2.32.8-CREDITS.txt
+  https://raw.githubusercontent.com/libsdl-org/SDL/release-2.32.8/CREDITS.txt
+SDL2-2.32.8-HIDAPI-LICENSE.txt
+  https://raw.githubusercontent.com/libsdl-org/SDL/release-2.32.8/src/hidapi/LICENSE.txt
+SDL2-2.32.8-HIDAPI-LICENSE-bsd.txt
+  https://raw.githubusercontent.com/libsdl-org/SDL/release-2.32.8/src/hidapi/LICENSE-bsd.txt
+SDL2-2.32.8-HIDAPI-LICENSE-orig.txt
+  https://raw.githubusercontent.com/libsdl-org/SDL/release-2.32.8/src/hidapi/LICENSE-orig.txt
+SDL2-2.32.8-YUV2RGB-LICENSE.txt
+  https://raw.githubusercontent.com/libsdl-org/SDL/release-2.32.8/src/video/yuv2rgb/LICENSE
+zlib-1.3.1-LICENSE.txt
+  https://raw.githubusercontent.com/madler/zlib/v1.3.1/LICENSE
+IJG-JPEG-9f-README.txt
+  jpeg-9f/README from https://www.ijg.org/files/jpegsrc.v9f.tar.gz
+
+opus-1.5.2-SOURCE-NOTICES.txt
+  Unmodified leading copyright and license comments from the bundled
+  code/thirdparty/opus-1.5.2 C source and headers, including SILK and KISS FFT.
+  Identical comment blocks are consolidated with their source paths.
+bundled-source-NOTICES.txt
+  Unmodified copyright and license comment blocks from:
+  code/client/snd_adpcm.c (Stichting Mathematisch Centrum ADPCM)
+  code/client/libmumblelink.c (Mumble Link)
+  code/qcommon/unzip.h (Gilles Vollant minizip)
+  code/renderercommon/puff.h and puff.c (Mark Adler puff)
+  code/game/bg_lib.c (QVM C library, Berkeley, Sun and Patrick Powell notices)
+  code/qcommon/md5.c (Colin Plumb's public-domain MD5 implementation)
+
+The Windows HTTP implementation uses WinINet; libcurl is not linked into
+this build. OpenAL is loaded optionally from an installed runtime through
+USE_OPENAL_DLOPEN; no OpenAL library is included in the portable package.
+The minizip build defines NOUNCRYPT and excludes Info-ZIP crypt code.
+
+The repository's COPYING.txt and GPL accompany the game code. Its CC and
+the original game-data credit/license files accompany the bundled media.

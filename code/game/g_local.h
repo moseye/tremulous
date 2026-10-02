@@ -30,6 +30,10 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 typedef struct gentity_s gentity_t;
 typedef struct gclient_s gclient_t;
 
+int       trap_BotAllocateClient( void );
+qboolean  trap_BotIsClient( int clientNum );
+void      trap_BotSetUsercmd( int clientNum, const usercmd_t *cmd );
+
 #include "g_admin.h"
 
 //==================================================================

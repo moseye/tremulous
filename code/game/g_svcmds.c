@@ -24,6 +24,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // this file holds commands that can be executed by the server console, but not remote clients
 
 #include "g_local.h"
+#include "g_bot.h"
 
 /*
 ===================
@@ -587,6 +588,8 @@ qboolean  ConsoleCommand( void )
   struct svcmd *command;
 
   trap_Argv( 0, cmd, sizeof( cmd ) );
+
+  if( G_BotConsoleCommand( ) ) return qtrue;
 
   command = bsearch( cmd, svcmds, ARRAY_LEN( svcmds ),
     sizeof( struct svcmd ), cmdcmp );
