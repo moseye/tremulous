@@ -139,6 +139,7 @@ typedef struct netchan_buffer_s {
 
 typedef struct client_s {
 	clientState_t	state;
+	qboolean        isBot;  // allocated by the server, never by userinfo
 	char			userinfo[MAX_INFO_STRING];		// name, etc
 
 	char			reliableCommands[MAX_RELIABLE_COMMANDS][MAX_STRING_CHARS];

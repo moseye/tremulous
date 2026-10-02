@@ -133,6 +133,9 @@ not have future snapshot_t executed before it is executed
 void SV_AddServerCommand( client_t *client, const char *cmd ) {
 	int		index, i;
 
+	// Bots never acknowledge network reliable commands.
+	if (client->isBot) return;
+
 	// this is very ugly but it's also a waste to for instance send multiple config string updates
 	// for the same config string index in one snapshot
 //	if ( SV_ReplacePendingServerCommands( client, cmd ) ) {
@@ -855,7 +858,7 @@ void SV_PacketEvent( netadr_t from, msg_t *msg ) {
 
 	// find which client the message is from
 	for (i=0, cl=svs.clients ; i < sv_maxclients->integer ; i++,cl++) {
-		if (cl->state == CS_FREE) {
+		if (cl->state == CS_FREE || cl->isBot) {
 			continue;
 		}
 		if ( !NET_CompareBaseAdr( from, cl->netchan.remoteAddress ) ) {
@@ -914,6 +917,10 @@ static void SV_CalcPings( void ) {
 			cl->ping = 999;
 			continue;
 		}
+		if (cl->isBot) {
+			cl->ping = SV_GameClientNum(i)->ping = 0;
+			continue;
+		}
 
 		total = 0;
 		count = 0;
@@ -963,6 +970,7 @@ static void SV_CheckTimeouts( void ) {
 	zombiepoint = svs.time - 1000 * sv_zombietime->integer;
 
 	for (i=0,cl=svs.clients ; i < sv_maxclients->integer ; i++,cl++) {
+		if (cl->isBot) continue;
 		// message times may be wrong across a changelevel
 		if (cl->lastPacketTime > svs.time) {
 			cl->lastPacketTime = svs.time;

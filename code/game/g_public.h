@@ -225,7 +225,12 @@ typedef enum {
   G_SEND_GAMESTAT,
 
   G_ADDCOMMAND,
-  G_REMOVECOMMAND
+  G_REMOVECOMMAND,
+
+  // Append imports to preserve the existing game/engine ABI.
+  G_BOT_ALLOCATE_CLIENT,
+  G_BOT_IS_CLIENT,
+  G_BOT_SET_USERCMD
 } gameImport_t;
 
 

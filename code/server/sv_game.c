@@ -272,6 +272,29 @@ void SV_GetUsercmd( int clientNum, usercmd_t *cmd ) {
 
 //==============================================
 
+// Bot clients occupy real server slots without a network connection.
+static int SV_BotAllocateClient( void ) {
+	int i;
+	client_t *client;
+	for (i = sv_privateClients->integer; i < sv_maxclients->integer; i++) {
+		client = &svs.clients[i];
+		if (client->state != CS_FREE) continue;
+		Com_Memset(client, 0, sizeof(*client));
+		client->isBot = qtrue;
+		client->state = CS_ACTIVE;
+		client->gentity = SV_GentityNum(i);
+		client->lastPacketTime = svs.time;
+		client->lastConnectTime = svs.time;
+		client->lastUsercmd.serverTime = sv.time;
+		client->rate = 25000;
+		client->snapshotMsec = 50;
+		client->gamestateMessageNum = -1;
+		SV_Heartbeat_f();
+		return i;
+	}
+	return -1;
+}
+
 static int	FloatAsInt( float f ) {
 	floatint_t fi;
 	fi.f = f;
@@ -397,6 +420,19 @@ intptr_t SV_GameSystemCalls( intptr_t *args ) {
 
 	case G_GET_USERCMD:
 		SV_GetUsercmd( args[1], VMA(2) );
+		return 0;
+
+	case G_BOT_ALLOCATE_CLIENT:
+		return SV_BotAllocateClient();
+	case G_BOT_IS_CLIENT:
+		return args[1] >= 0 && args[1] < sv_maxclients->integer &&
+		       svs.clients[args[1]].isBot;
+	case G_BOT_SET_USERCMD:
+		if (args[1] >= 0 && args[1] < sv_maxclients->integer &&
+		    svs.clients[args[1]].isBot) {
+			svs.clients[args[1]].lastUsercmd = *(usercmd_t *)VMA(2);
+			svs.clients[args[1]].lastPacketTime = svs.time;
+		}
 		return 0;
 	case G_GET_ENTITY_TOKEN:
 		{

@@ -1592,7 +1592,7 @@ void Cmd_SetViewpos_f( gentity_t *ent )
 
 #define AS_OVER_RT3         ((ALIENSENSE_RANGE*0.5f)/M_ROOT3)
 
-static qboolean G_RoomForClassChange( gentity_t *ent, class_t class,
+qboolean G_RoomForClassChange( gentity_t *ent, class_t class,
                                       vec3_t newOrigin )
 {
   vec3_t    fromMins, fromMaxs;
@@ -1655,9 +1655,9 @@ static qboolean G_RoomForClassChange( gentity_t *ent, class_t class,
 Cmd_Class_f
 =================
 */
-void Cmd_Class_f( gentity_t *ent )
+/* Shared with server bots so evolution uses the same checks as a player. */
+void G_ChangeClass( gentity_t *ent, const char *s )
 {
-  char      s[ MAX_TOKEN_CHARS ];
   int       clientNum;
   int       i;
   vec3_t    infestOrigin;
@@ -1672,7 +1672,6 @@ void Cmd_Class_f( gentity_t *ent )
   vec3_t    oldVel;
 
   clientNum = ent->client - level.clients;
-  trap_Argv( 1, s, sizeof( s ) );
   newClass = BG_ClassByName( s )->number;
 
   if( ent->client->sess.spectatorState != SPECTATOR_NOT )
@@ -1841,6 +1840,14 @@ void Cmd_Class_f( gentity_t *ent )
     G_TriggerMenu( clientNum, MN_H_DEADTOCLASS );
 }
 
+
+void Cmd_Class_f( gentity_t *ent )
+{
+  char s[ MAX_TOKEN_CHARS ];
+
+  trap_Argv( 1, s, sizeof( s ) );
+  G_ChangeClass( ent, s );
+}
 
 /*
 =================
@@ -2070,14 +2077,12 @@ void Cmd_ToggleItem_f( gentity_t *ent )
 Cmd_Buy_f
 =================
 */
-void Cmd_Buy_f( gentity_t *ent )
+/* Keep all armoury, stage, slot and credit checks in one path. */
+void G_BuyItem( gentity_t *ent, const char *s )
 {
-  char s[ MAX_TOKEN_CHARS ];
   weapon_t  weapon;
   upgrade_t upgrade;
   qboolean  energyOnly;
-
-  trap_Argv( 1, s, sizeof( s ) );
 
   weapon = BG_WeaponByName( s )->number;
   upgrade = BG_UpgradeByName( s )->number;
@@ -2249,19 +2254,24 @@ void Cmd_Buy_f( gentity_t *ent )
 }
 
 
+void Cmd_Buy_f( gentity_t *ent )
+{
+  char s[ MAX_TOKEN_CHARS ];
+
+  trap_Argv( 1, s, sizeof( s ) );
+  G_BuyItem( ent, s );
+}
+
 /*
 =================
 Cmd_Sell_f
 =================
 */
-void Cmd_Sell_f( gentity_t *ent )
+void G_SellItem( gentity_t *ent, const char *s )
 {
-  char      s[ MAX_TOKEN_CHARS ];
   int       i;
   weapon_t  weapon;
   upgrade_t upgrade;
-
-  trap_Argv( 1, s, sizeof( s ) );
 
   //no armoury nearby
   if( !G_BuildableRange( ent->client->ps.origin, 100, BA_H_ARMOURY ) )
@@ -2396,6 +2406,14 @@ void Cmd_Sell_f( gentity_t *ent )
   ent->client->pers.infoChangeTime = level.time;
 }
 
+
+void Cmd_Sell_f( gentity_t *ent )
+{
+  char s[ MAX_TOKEN_CHARS ];
+
+  trap_Argv( 1, s, sizeof( s ) );
+  G_SellItem( ent, s );
+}
 
 /*
 =================

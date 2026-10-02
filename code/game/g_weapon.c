@@ -25,6 +25,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // perform the server side effects of a weapon firing
 
 #include "g_local.h"
+#include "g_bot.h"
 
 static  vec3_t  forward, right, up;
 static  vec3_t  muzzle;
@@ -808,6 +809,18 @@ void buildFire( gentity_t *ent, dynMenu_t menu )
       return;
     }
 
+    if( G_BotIsBot( ent - g_entities ) )
+    {
+      vec3_t origin, normal;
+      // A bot must never spend a teammate's deconstruction marks.
+      if( G_CanBuild( ent, buildable,
+          BG_Class( ent->client->ps.stats[ STAT_CLASS ] )->buildDist,
+          origin, normal ) != IBE_NONE || level.numBuildablesForRemoval > 0 )
+      {
+        ent->client->ps.stats[ STAT_BUILDABLE ] = BA_NONE;
+        return;
+      }
+    }
     if( G_BuildIfValid( ent, buildable ) )
     {
       if( !g_cheats.integer )

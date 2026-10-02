@@ -532,6 +532,10 @@ void SV_SpawnServer( char *server, qboolean killBots ) {
 		// send the new gamestate to all connected clients
 		if (svs.clients[i].state >= CS_CONNECTED) {
 			char	*denied;
+			if (svs.clients[i].isBot && killBots) {
+				SV_DropClient(&svs.clients[i], "bot removed for new map");
+				continue;
+			}
 
 			// connect the client again
 			denied = VM_ExplicitArgPtr( gvm, VM_Call( gvm, GAME_CLIENT_CONNECT, i, qfalse ) );	// firstTime = qfalse
@@ -542,7 +546,12 @@ void SV_SpawnServer( char *server, qboolean killBots ) {
 			} else {
 					// when we get the next packet from a connected client,
 					// the new gamestate will be sent
-					svs.clients[i].state = CS_CONNECTED;
+					if (svs.clients[i].isBot) {
+						svs.clients[i].gentity = SV_GentityNum(i);
+						SV_ClientEnterWorld(&svs.clients[i], NULL);
+					} else {
+						svs.clients[i].state = CS_CONNECTED;
+					}
 				}
 		}
 	}	
@@ -694,7 +703,7 @@ void SV_FinalMessage( char *message ) {
 	// send it twice, ignoring rate
 	for ( j = 0 ; j < 2 ; j++ ) {
 		for (i=0, cl = svs.clients ; i < sv_maxclients->integer ; i++, cl++) {
-			if (cl->state >= CS_CONNECTED) {
+			if (cl->state >= CS_CONNECTED && !cl->isBot) {
 				// don't send a disconnect to a local client
 				if ( cl->netchan.remoteAddress.type != NA_LOOPBACK ) {
 					SV_SendServerCommand( cl, "print \"%s\n\"\n", message );

@@ -22,6 +22,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 
 #include "g_local.h"
+#include "g_bot.h"
 
 /*
 ===============
@@ -513,6 +514,8 @@ Returns qfalse if the client is dropped
 qboolean ClientInactivityTimer( gentity_t *ent )
 {
   gclient_t *client = ent->client;
+
+  if( G_BotIsBot( ent - g_entities ) ) return qtrue;
 
   if( ! g_inactivity.integer )
   {
@@ -1756,14 +1759,14 @@ void ClientThink( int clientNum )
   // phone jack if they don't get any for a while
   ent->client->lastCmdTime = level.time;
 
-  if( !g_synchronousClients.integer )
+  if( !g_synchronousClients.integer && !G_BotIsBot( clientNum ) )
     ClientThink_real( ent );
 }
 
 
 void G_RunClient( gentity_t *ent )
 {
-  if( !g_synchronousClients.integer )
+  if( !g_synchronousClients.integer && !G_BotIsBot( ent - g_entities ) )
     return;
 
   ent->client->pers.cmd.serverTime = level.time;

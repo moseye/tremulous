@@ -325,7 +325,7 @@ void SV_DirectConnect( netadr_t from ) {
 
 	// quick reject
 	for (i=0,cl=svs.clients ; i < sv_maxclients->integer ; i++,cl++) {
-		if ( cl->state == CS_FREE ) {
+		if ( cl->state == CS_FREE || cl->isBot ) {
 			continue;
 		}
 		if ( NET_CompareBaseAdr( from, cl->netchan.remoteAddress )
@@ -409,7 +409,7 @@ void SV_DirectConnect( netadr_t from ) {
 
 	// if there is already a slot for this ip, reuse it
 	for (i=0,cl=svs.clients ; i < sv_maxclients->integer ; i++,cl++) {
-		if ( cl->state == CS_FREE ) {
+		if ( cl->state == CS_FREE || cl->isBot ) {
 			continue;
 		}
 		if ( NET_CompareBaseAdr( from, cl->netchan.remoteAddress )
@@ -584,7 +584,7 @@ void SV_DropClient( client_t *drop, const char *reason ) {
 		// see if we already have a challenge for this ip
 		challenge = &svs.challenges[0];
 
-	for (i = 0 ; i < MAX_CHALLENGES ; i++, challenge++) {
+	for (i = 0 ; !drop->isBot && i < MAX_CHALLENGES ; i++, challenge++) {
 		if ( NET_CompareAdr( drop->netchan.remoteAddress, challenge->adr ) ) {
 				Com_Memset(challenge, 0, sizeof(*challenge));
 				break;
@@ -616,6 +616,10 @@ void SV_DropClient( client_t *drop, const char *reason ) {
 
 	// nuke user info
 	SV_SetUserinfo( drop - svs.clients, "" );
+	if (drop->isBot) {
+		drop->isBot = qfalse;
+		drop->state = CS_FREE;
+	}
 
 	// if this was the last client on the server, send a heartbeat
 	// to the master so it is known the server is empty

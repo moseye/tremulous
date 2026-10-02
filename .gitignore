@@ -1,4 +1,6 @@
 build*
+/dist-bots/
+__pycache__/
 *.swp
 *tags
 *~
