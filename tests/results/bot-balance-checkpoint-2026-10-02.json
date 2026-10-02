@@ -1,0 +1,214 @@
+{
+  "schema": 1,
+  "checkpoint_date": "2026-10-02",
+  "kind": "sanitized_bot_balance_checkpoint",
+  "summary": "Execution and replay checkpoint, not a completed balance or release certification.",
+  "scenario": {
+    "bots_per_team": 16,
+    "teams": ["humans","aliens"],
+    "skill_distribution": "bell",
+    "sv_fps": 20,
+    "physics_step_ms": 50,
+    "dedicated": 1,
+    "net_enabled": 0,
+    "sv_maxclients": 40,
+    "g_doWarmup": 0,
+    "positive_fixed_startup_seed": true,
+    "profile": {
+      "g_botBenchmarkDetails": "1",
+      "g_botCombatTuning": "1",
+      "g_botHumanAimCone": "6",
+      "g_botHumanFireDelay": "300",
+      "g_botHumanReaction": "600",
+      "g_botHumanTurnSpeed": "160",
+      "g_botNavNodes": "8192",
+      "g_botNavTuning": "1",
+      "g_botSpawnScale": "1",
+      "g_botTeamwork": "1"
+    },
+    "baseline_wall_controls": {
+      "timescale": 1,
+      "fixedtime": 0
+    },
+    "default_tuning_flags": 0
+  },
+  "metric_columns": {
+    "humans_and_aliens": ["bots","alive","kills","defense_kills","deaths","player_damage","building_damage","buildings","core_health","spawns","usable_spawns","spawn_count"],
+    "nav": ["nodes","links","expanded","components","largest_component","bases_connected","plans","routes","partial_routes","failed_full_routes","class_deferred_queries","stuck_escapes"]
+  },
+  "metric_definitions": {
+    "metric_arrays": "Every humans/aliens/nav numeric array follows metric_columns in this document.",
+    "building_damage": "Cumulative actual enemy building health removed, including defense attribution; all structures, not only the HQ.",
+    "kills": "Enemy bot player kills; defense kills are separate.",
+    "routes": "Cumulative successful complete route plans, not simultaneous active routes.",
+    "bases_connected": "Directed floor-graph connectivity at the sample; does not prove every class or wall route is traversable.",
+    "telemetry_replay": "Every JSONL record compared after removing only wall_elapsed_ms; positions and navigation details included."
+  },
+  "current_runtime": {
+    "scheduler": "Oldest eligible alive bot receives first planning opportunity using per-client monotonic serial priority.",
+    "files": [
+      {"name":"tremded.exe","bytes":375296,"sha256":"c6d31f631f5c3501ad39cfdf894d952f5302168007142d8d104560553938b4b1"},
+      {"name":"renderer_opengl1.dll","bytes":573952,"sha256":"8b3a1b0eeb9414d3ad5444f8cfc11346a2f94fe2c4ba45a0e7786e263d13828d"},
+      {"name":"renderer_opengl2.dll","bytes":817664,"sha256":"31154b1d0fad3fac9ec745bcaa9b277cf322c2ae23b08dd28937e183e9d4138b"},
+      {"name":"SDL2.dll","bytes":1576448,"sha256":"490fd069834f308c7ec168f0c29de8d20e1b4914e14de690414874a8697296fb"},
+      {"name":"cgame.dll","bytes":490496,"sha256":"fdbce7e0eb2c2ab9ed24503b7dca8e73110aac5b533912f03c86186529bc1a50"},
+      {"name":"game.dll","bytes":599552,"sha256":"d4694c6da7e55ecfa461c3f3fe3b504260743972f959959a41a9d0dba6db7907"},
+      {"name":"ui.dll","bytes":191488,"sha256":"aa3cf6e81807e71280c7e41d46d827ad30ba81c5a946a36ac11817f832605c99"},
+      {"name":"cgame.qvm","bytes":637876,"sha256":"6680a2bd2d0c276772bf8359baea73662fab76ec5c248be1cfd0b7789d21ceef"},
+      {"name":"game.qvm","bytes":750460,"sha256":"2a65bfc946b20426482519face2eb86fad65b9ccb668ea7895bf23bc6e315ee4"},
+      {"name":"ui.qvm","bytes":304808,"sha256":"9b09c2e62406b5d89714e21145713486ee302ba1a945c84b13f024eb657fbf75"},
+      {"name":"data-1.1.0.pk3","bytes":44925864,"sha256":"3db7a7ddf96d5ec87b64fd694459157bbe2ff0e014460ee964683302605115c0"},
+      {"name":"data-gpp1.pk3","bytes":464273,"sha256":"5100a010741ea0de1184299973dc2fb63eb4d70e9025179d672c4bb5c0311197"},
+      {"name":"map-arachnid2-1.1.0.pk3","bytes":8105026,"sha256":"699e8914343b59e9d7a7eb1bc0761a94088eb3622ae7659b784830539fb81c90"},
+      {"name":"map-atcs-1.1.0.pk3","bytes":3678004,"sha256":"b7954af8bab55d13b7282552c6286539d48bbc9102d657bb3e67fe668a9af258"},
+      {"name":"map-karith-1.1.0.pk3","bytes":9928757,"sha256":"a53ab1a3589001dbd3771ebc916d533841367f834c8d777f4efc3b0e0d21a48c"},
+      {"name":"map-nexus6-1.1.0.pk3","bytes":10382317,"sha256":"c168e11780b23f716d49f5e5adaf2a7ba1732a981016a64827375a1d15e0c0be"},
+      {"name":"map-niveus-1.1.0.pk3","bytes":6403257,"sha256":"8bf0fe1f5b94e85ef087df67f05a08c17d97260849ba641187b15cb8a0523146"},
+      {"name":"map-transit-1.1.0.pk3","bytes":10423326,"sha256":"04ec0b092e776cfe8759b95f9159bab3a4acf24abe3a6d687b8911b0350d4352"},
+      {"name":"map-tremor-1.1.0.pk3","bytes":1961298,"sha256":"698e18c65b6db17fbb045123356ea9c92d3f490910ee0414f7b8cec0119c2c85"},
+      {"name":"map-uncreation-1.1.0.pk3","bytes":6016927,"sha256":"962edc48318e812b307826bfd01906cea913901c1f036027251a6b16a88c27fc"},
+      {"name":"zz-bots.pk3","bytes":530384,"sha256":"4478c7bc06b7dfb5e17b3c50cee44719330954b320cb10674173e122e5065311"}
+    ],
+    "source_state": "Fair scheduling checkpoint before the unbuilt mover-retry navigation fix. These hashes identify test binaries, not the current source tree or final release validation."
+  },
+  "engine_equivalence": {
+    "source": "fair-scheduling-engine-validation/validation-59fbc8b664",
+    "runtime": "current_checkpoint",
+    "map": "niveus",
+    "seed": 17,
+    "requested_seconds": 15,
+    "vm": 0,
+    "details_enabled": true,
+    "passed": true,
+    "recorded_checks": ["unsafe-fast-startup-guards","native-module-observed","runtime-hashes-stable","50ms-physics-ticks","15s-300frames","details-enabled-all-modes","all-telemetry-except-wall-identical","fast-repeat-identical","timescale-fixedtime-ignored","wall-pacing-accelerated"],
+    "runtime_hashes_checked_before_each_run_and_after": true,
+    "runs": [
+      {"label":"realtime","speed":"realtime","status":"finished","observed_mode":"native","timescale":"1","fixedtime":"0","elapsed_ms":15000,"frames":300,"min_step_ms":50,"max_step_ms":50,"wall_elapsed_ms":14861,"process_wall_seconds":15.146229,"telemetry_records":2,"telemetry_sha256":"342d3f051185744024b93135e9163fb89a716bda7658164614fc3b0a9577c8c5"},
+      {"label":"fast-r0","speed":"fast","status":"finished","observed_mode":"native","timescale":"1","fixedtime":"0","elapsed_ms":15000,"frames":300,"min_step_ms":50,"max_step_ms":50,"wall_elapsed_ms":122,"process_wall_seconds":0.371479,"telemetry_records":2,"telemetry_sha256":"342d3f051185744024b93135e9163fb89a716bda7658164614fc3b0a9577c8c5"},
+      {"label":"fast-r1","speed":"fast","status":"finished","observed_mode":"native","timescale":"1","fixedtime":"0","elapsed_ms":15000,"frames":300,"min_step_ms":50,"max_step_ms":50,"wall_elapsed_ms":124,"process_wall_seconds":0.376186,"telemetry_records":2,"telemetry_sha256":"342d3f051185744024b93135e9163fb89a716bda7658164614fc3b0a9577c8c5"},
+      {"label":"fast-debug-controls","speed":"fast","status":"finished","observed_mode":"native","timescale":"19","fixedtime":"700","elapsed_ms":15000,"frames":300,"min_step_ms":50,"max_step_ms":50,"wall_elapsed_ms":117,"process_wall_seconds":0.376711,"telemetry_records":2,"telemetry_sha256":"342d3f051185744024b93135e9163fb89a716bda7658164614fc3b0a9577c8c5"}
+    ],
+    "guards": [
+      {"label":"reject-enabled-network","exit_code":3,"timed_out":false,"passed":true,"wall_seconds":0.055592},
+      {"label":"reject-unspecified-network","exit_code":3,"timed_out":false,"passed":true,"wall_seconds":0.049288}
+    ],
+    "guard_scope": "Startup rejects explicitly enabled or unspecified networking. No non-dedicated-client rejection run is claimed.",
+    "scope": "Early spawning, construction and navigation. All four terminal records have zero kills, shots, player damage and building damage; combat equivalence is not established."
+  },
+  "current_short_replays": [
+    {"source":"fair-scheduling-probe/suite-dd51e354e3","runtime":"current_checkpoint","speed":"fast","map":"arachnid2","seed":17,"requested_seconds":60,"requested_vm":0,"requested_mode":"native","observed_mode":"native","repeats":[0,1],"recorded_replay_status":[{"all_finished":true,"map":"arachnid2","outcome_matches":true,"profile":"candidate","runs":2,"seed":17,"telemetry_matches":true}],"normal_ticks_verified":[true,true],"settings_verified":[true,true],"telemetry_records":[3,3],"telemetry_sha256":["30092f1c99203f726fed39dc8a1921c6c2cedc0e5b92cf782bf12da1737f8b78","30092f1c99203f726fed39dc8a1921c6c2cedc0e5b92cf782bf12da1737f8b78"],"terminal_metrics_equal_except_wall":true,"terminal":{"map":"arachnid2","seed":17,"status":"finished","winner":"draw","reason":"time_limit","elapsed_ms":60000,"frames":1200,"humans":[16,16,6,0,4,165,0,12,930,4,4,20],"aliens":[16,14,4,0,6,482,0,11,750,4,4,20],"nav":[2157,13286,2157,1,2157,1,706,364,131,342,3438,156],"first_base_connection_sample_ms":60000}},
+    {"source":"fair-scheduling-vm1-probe/suite-4e2fd297c0","runtime":"current_checkpoint","speed":"fast","map":"arachnid2","seed":17,"requested_seconds":30,"requested_vm":1,"requested_mode":"interpreted_qvm","observed_mode":"interpreted_qvm","repeats":[0,1],"recorded_replay_status":[{"all_finished":true,"map":"arachnid2","outcome_matches":true,"profile":"candidate","runs":2,"seed":17,"telemetry_matches":true}],"normal_ticks_verified":[true,true],"settings_verified":[true,true],"telemetry_records":[2,2],"telemetry_sha256":["2bde3fc46144f14519f709ba3e5889ae9a496725841dc89775f9a8304c62d782","2bde3fc46144f14519f709ba3e5889ae9a496725841dc89775f9a8304c62d782"],"terminal_metrics_equal_except_wall":true,"terminal":{"map":"arachnid2","seed":17,"status":"finished","winner":"draw","reason":"time_limit","elapsed_ms":30000,"frames":600,"humans":[16,11,0,0,0,0,0,12,930,4,4,11],"aliens":[16,9,0,0,0,0,0,11,750,4,3,9],"nav":[1375,8136,1341,2,708,0,188,49,55,139,2178,40],"first_base_connection_sample_ms":null}},
+    {"source":"fair-scheduling-vm2-probe/suite-e5a32ab587","runtime":"current_checkpoint","speed":"fast","map":"arachnid2","seed":17,"requested_seconds":30,"requested_vm":2,"requested_mode":"compiled_qvm","observed_mode":"compiled_qvm","repeats":[0,1],"recorded_replay_status":[{"all_finished":true,"map":"arachnid2","outcome_matches":true,"profile":"candidate","runs":2,"seed":17,"telemetry_matches":true}],"normal_ticks_verified":[true,true],"settings_verified":[true,true],"telemetry_records":[2,2],"telemetry_sha256":["2bde3fc46144f14519f709ba3e5889ae9a496725841dc89775f9a8304c62d782","2bde3fc46144f14519f709ba3e5889ae9a496725841dc89775f9a8304c62d782"],"terminal_metrics_equal_except_wall":true,"terminal":{"map":"arachnid2","seed":17,"status":"finished","winner":"draw","reason":"time_limit","elapsed_ms":30000,"frames":600,"humans":[16,11,0,0,0,0,0,12,930,4,4,11],"aliens":[16,9,0,0,0,0,0,11,750,4,3,9],"nav":[1375,8136,1341,2,708,0,188,49,55,139,2178,40],"first_base_connection_sample_ms":null}}
+  ],
+  "current_large_map_screen": {
+    "source": "fair-scheduling-large-maps/suite-c372fb9ec5",
+    "runtime": "current_checkpoint",
+    "speed": "fast",
+    "maps": ["nexus6","transit","tremor","uncreation"],
+    "seeds": [17,29,41],
+    "requested_seconds": 900,
+    "runs_count": 12,
+    "checks": {
+      "requested_mode": "native",
+      "observed_modes": ["native","native","native","native","native","native","native","native","native","native","native","native"],
+      "settings_verified": [true,true,true,true,true,true,true,true,true,true,true,true],
+      "normal_ticks_verified": [true,true,true,true,true,true,true,true,true,true,true,true],
+      "recorded_replay_status": [],
+      "telemetry_sha256": ["ba9132f2ff441e6447c3e7cf3af9268dbf888cd07c21c7bc34069479ae259c1f","b65d4da53d24f2e944b9ed9b065c12dc2237f7a6c44b6b4492676141c9ba5c24","e2ecd1611251f174aaaefb972bf6acea03a2476bead18f5c277d71c9dc180229","73e25f7d3ffbeef363e024bd267ef7b928d170197b8d6d3274dd01500e23fdc0","2f4fbeb81df258f682a06208cd0f433353f605cda83b878016a0a7d85d3013a1","5f21354afd88d2a293cad959b6e7c291be66ca8573233f735888cad8efa0e9f1","385e8c4be94d44094318efab3f9f7293dee48c0092f1a6bcbe96d863eb3bb4c4","9fa5de28075bb00aff0cee927b7b7a3f220a36ae7562c0485c39c572c3768ce6","dfbdbd8689627b480dd7dca71349ef54839875fcfb6ee76c986b213225c0a8c6","833ccff40578d790df0f89146f468b2c1b859b38c0bba847f7d57cff52a3fc2a","7646bf9a7b6e27b7b4a673758d90d975b7cf3c2cd763286314f212f2c506bb94","a82c411dd94c12e6633d3705e4be214a81a0ca55e47cea39bb82ac0fed046235"]
+    },
+    "runs": [
+      {"map":"nexus6","seed":17,"status":"finished","winner":"draw","reason":"time_limit","elapsed_ms":900000,"frames":18000,"humans":[16,16,0,0,0,0,0,12,930,4,4,16],"aliens":[16,16,0,0,0,0,0,7,750,2,2,16],"nav":[668,3570,668,5,290,0,19621,4327,1306,15294,10635,13103],"first_base_connection_sample_ms":null},
+      {"map":"nexus6","seed":29,"status":"finished","winner":"draw","reason":"time_limit","elapsed_ms":900000,"frames":18000,"humans":[16,16,0,0,0,0,0,12,930,4,4,16],"aliens":[16,16,0,0,0,0,0,7,750,2,2,16],"nav":[673,3528,673,6,293,0,17626,3721,1132,13905,4038,13034],"first_base_connection_sample_ms":null},
+      {"map":"nexus6","seed":41,"status":"finished","winner":"draw","reason":"time_limit","elapsed_ms":900000,"frames":18000,"humans":[16,16,0,0,0,0,0,11,930,4,4,16],"aliens":[16,16,0,0,0,0,0,7,750,2,2,16],"nav":[704,3866,704,7,308,0,20165,4172,758,15993,1695,13857],"first_base_connection_sample_ms":null},
+      {"map":"transit","seed":17,"status":"finished","winner":"draw","reason":"time_limit","elapsed_ms":900000,"frames":18000,"humans":[16,16,0,0,0,0,0,12,930,4,4,16],"aliens":[16,16,0,0,0,0,0,11,750,5,5,16],"nav":[2062,12364,2062,4,1821,0,16076,2086,983,13990,6135,12490],"first_base_connection_sample_ms":null},
+      {"map":"transit","seed":29,"status":"finished","winner":"draw","reason":"time_limit","elapsed_ms":900000,"frames":18000,"humans":[16,16,0,0,0,0,0,12,930,4,4,16],"aliens":[16,16,0,0,0,0,0,11,750,5,5,16],"nav":[2061,12364,2061,4,1823,0,15788,2455,971,13333,11137,11923],"first_base_connection_sample_ms":null},
+      {"map":"transit","seed":41,"status":"finished","winner":"draw","reason":"time_limit","elapsed_ms":900000,"frames":18000,"humans":[16,16,0,0,0,0,0,12,930,4,4,16],"aliens":[16,16,0,0,0,0,0,11,750,5,5,16],"nav":[2066,12388,2066,4,1822,0,15268,4456,750,10812,4944,12832],"first_base_connection_sample_ms":null},
+      {"map":"tremor","seed":17,"status":"finished","winner":"draw","reason":"time_limit","elapsed_ms":900000,"frames":18000,"humans":[16,16,0,0,0,0,0,12,930,4,4,16],"aliens":[16,16,0,0,0,0,0,11,750,4,4,16],"nav":[1449,9119,1449,4,525,0,18276,7655,1772,10621,18612,10925],"first_base_connection_sample_ms":null},
+      {"map":"tremor","seed":29,"status":"finished","winner":"draw","reason":"time_limit","elapsed_ms":900000,"frames":18000,"humans":[16,16,139,36,44,14469,482,12,930,5,5,60],"aliens":[16,15,41,3,175,6661,0,12,750,4,4,190],"nav":[1511,9567,1511,3,1497,1,32773,14554,3568,18219,468933,6296],"first_base_connection_sample_ms":540000},
+      {"map":"tremor","seed":41,"status":"finished","winner":"draw","reason":"time_limit","elapsed_ms":900000,"frames":18000,"humans":[16,16,29,98,0,3415,0,12,930,4,4,16],"aliens":[16,16,0,0,127,280,0,11,750,4,4,143],"nav":[1708,10422,1708,3,957,0,20189,4320,4046,15869,45776,8172],"first_base_connection_sample_ms":null},
+      {"map":"uncreation","seed":17,"status":"finished","winner":"draw","reason":"time_limit","elapsed_ms":900000,"frames":18000,"humans":[16,16,0,0,45,0,0,11,930,3,3,61],"aliens":[16,16,0,0,120,0,0,10,750,4,4,136],"nav":[643,3944,643,11,262,0,17024,4096,1776,12928,16019,10138],"first_base_connection_sample_ms":null},
+      {"map":"uncreation","seed":29,"status":"finished","winner":"draw","reason":"time_limit","elapsed_ms":900000,"frames":18000,"humans":[16,16,0,0,26,0,0,10,930,3,3,42],"aliens":[16,16,0,0,131,0,0,10,750,4,4,147],"nav":[519,3076,519,13,251,0,16256,2900,2334,13356,20884,10603],"first_base_connection_sample_ms":null},
+      {"map":"uncreation","seed":41,"status":"finished","winner":"draw","reason":"time_limit","elapsed_ms":900000,"frames":18000,"humans":[16,16,6,0,34,210,0,10,930,3,3,50],"aliens":[16,16,0,0,158,5,0,11,750,5,5,174],"nav":[659,4042,659,12,258,0,17955,3833,1386,14122,24101,10279],"first_base_connection_sample_ms":null}
+    ]
+  },
+  "current_native_full_matches": {
+    "source": "fair-scheduling-long/suite-eceb61dd03",
+    "runtime": "current_checkpoint",
+    "speed": "fast",
+    "maps": ["arachnid2","niveus"],
+    "seeds": [17,29,41],
+    "requested_seconds": 2400,
+    "runs_count": 6,
+    "checks": {
+      "requested_mode": "native",
+      "observed_modes": ["native","native","native","native","native","native"],
+      "settings_verified": [true,true,true,true,true,true],
+      "normal_ticks_verified": [true,true,true,true,true,true],
+      "recorded_replay_status": [],
+      "telemetry_sha256": ["cf8ff07e6b744ab055ab911710169c2701c01a183f23846c1d8c7900dfe2de95","1ce2382157dd9b66ad8fe2b7461cfa148723f766277b25eafc77ca8f2121822f","9027d9732b2c89421c581c619a30099b9dc630e9b2529d7f5525dfbcea443d01","663376e0540e38091b5774db69e01d05bab47fc93d04f9e2277efdf67b7d981f","95ad343156ae080ca369a3a0f2b42e4d2f383a697ab41095e7b1e6303065de4d","5bb546d6d3a24542bfb18d6e8afc56c412e3accfb34f728f070cf493e7da0949"]
+    },
+    "runs": [
+      {"map":"arachnid2","seed":17,"status":"finished","winner":"draw","reason":"time_limit","elapsed_ms":2400000,"frames":48000,"humans":[16,16,265,1,74,27633,1193,12,930,4,4,90],"aliens":[16,16,68,0,266,11904,0,14,750,4,4,282],"nav":[2985,18781,2985,7,2971,1,77850,36010,3216,41840,1105418,19275],"first_base_connection_sample_ms":60000},
+      {"map":"arachnid2","seed":29,"status":"finished","winner":"draw","reason":"time_limit","elapsed_ms":2400000,"frames":48000,"humans":[16,16,241,2,123,35846,545,12,930,4,4,139],"aliens":[16,16,119,1,244,18393,0,15,750,4,4,260],"nav":[2321,14264,2321,9,2310,1,83304,43524,4017,39780,1129747,18669],"first_base_connection_sample_ms":60000},
+      {"map":"arachnid2","seed":41,"status":"finished","winner":"draw","reason":"time_limit","elapsed_ms":2400000,"frames":48000,"humans":[16,16,261,0,98,32544,2364,12,930,4,4,114],"aliens":[16,16,97,0,264,15562,32,14,750,4,4,280],"nav":[2355,14389,2355,9,2335,1,82290,42643,5742,39647,1016309,16682],"first_base_connection_sample_ms":60000},
+      {"map":"niveus","seed":17,"status":"finished","winner":"draw","reason":"time_limit","elapsed_ms":2400000,"frames":48000,"humans":[16,16,130,0,150,22419,11033,12,930,5,5,166],"aliens":[16,16,140,9,130,19306,0,13,750,4,4,146],"nav":[1936,11033,1936,5,1642,1,67482,38850,3560,28632,386902,16650],"first_base_connection_sample_ms":60000},
+      {"map":"niveus","seed":29,"status":"finished","winner":"draw","reason":"time_limit","elapsed_ms":2400000,"frames":48000,"humans":[16,16,304,0,130,20847,5669,12,930,5,5,146],"aliens":[16,16,112,17,304,16437,0,11,750,3,3,320],"nav":[1905,10852,1905,6,1610,1,89672,43682,7159,45990,516534,11743],"first_base_connection_sample_ms":60000},
+      {"map":"niveus","seed":41,"status":"finished","winner":"draw","reason":"time_limit","elapsed_ms":2400000,"frames":48000,"humans":[16,16,125,0,155,26372,5700,12,930,4,4,171],"aliens":[16,16,145,9,125,19764,0,6,750,1,1,141],"nav":[1964,11225,1964,6,1668,1,78757,40405,4894,38352,435341,16435],"first_base_connection_sample_ms":60000}
+    ]
+  },
+  "current_compiled_gameplay": {
+    "source": "fair-scheduling-vm2-long/suite-265d6e3a68",
+    "runtime": "current_checkpoint",
+    "speed": "fast",
+    "maps": ["niveus"],
+    "seeds": [17],
+    "requested_seconds": 900,
+    "runs_count": 1,
+    "checks": {
+      "requested_mode": "compiled_qvm",
+      "observed_modes": ["compiled_qvm"],
+      "settings_verified": [true],
+      "normal_ticks_verified": [true],
+      "recorded_replay_status": [],
+      "telemetry_sha256": ["12e4b970890a7ec866ac1ea203a570a3bc9f5e7d9e0a090590cb96e874bd9b68"]
+    },
+    "runs": [
+      {"map":"niveus","seed":17,"status":"finished","winner":"draw","reason":"time_limit","elapsed_ms":900000,"frames":18000,"humans":[16,16,63,0,46,8373,3794,12,930,5,5,62],"aliens":[16,16,43,3,63,6420,0,9,642,3,3,79],"nav":[1890,10679,1890,8,1592,1,30667,14920,2460,15747,211837,4989],"first_base_connection_sample_ms":60000}
+    ],
+    "sampled_gameplay_proof": {
+      "team_columns": ["humans","aliens"],
+      "builds": [3,5],
+      "alien_core_absent_sample_ms": 630000,
+      "alien_replacement_core_construction_sample_ms": 660000,
+      "alien_replacement_core_spawned_sample_ms": 720000,
+      "scope": "Combat, normal physical respawning and HQ reconstruction executed. No cross-mode outcome equality or decisive-win claim."
+    }
+  },
+  "previous_long_match_evidence": {
+    "source": "cached-connectors-and-search-long/suite-0d7a45d481",
+    "runtime": "previous_checkpoint",
+    "speed": "fast",
+    "scheduler_difference": "Previous first-actor scheduling before current oldest-eligible per-client serial priority. These full-match results cannot validate the current native game module.",
+    "maps": ["arachnid2","niveus"],
+    "seeds": [17,29,41],
+    "requested_seconds": 2400,
+    "runs_count": 6,
+    "checks": {
+      "requested_mode": "native",
+      "observed_modes": ["native","native","native","native","native","native"],
+      "settings_verified": [true,true,true,true,true,true],
+      "normal_ticks_verified": [true,true,true,true,true,true],
+      "recorded_replay_status": [],
+      "telemetry_sha256": ["f7f59529488822a1334366d8af4145c4f12dd9aadc641f19c98e9a3c395e9500","cfb3883c1eae9de50ddb196cc1685ff585ed7b11e0afff9b0ee3029cf1c6bfd0","2f048197c4240ebbc8673203b85cd389df45986f75322c113101f850dd3cae06","e1afdb68415f7a260c0fc82c430a96f913f1447dd07a0a24db1a0b3b44c4673c","85313f25b80aa854209527b4a5c963fbed446a4a62bf6f207de87483bbd33c58","d43f0ee7c0f9c381676ba9ccce8c0c9889eb1af4a5b6c9501641e694d4150bda"]
+    },
+    "unchanged_media_files_reference": "PK3 entries in current_runtime.files; all previous recorded sizes and hashes match.",
+    "recorded_executables": [
+      {"name":"tremded.exe","bytes":375296,"sha256":"c6d31f631f5c3501ad39cfdf894d952f5302168007142d8d104560553938b4b1"},
+      {"name":"game.dll","bytes":599040,"sha256":"f6eb08a93f618201d060f7b4ca777db0269a1bc32174bd9e620361cebf1fab3e"}
+    ],
+    "outcome_columns": ["map","seed","winner","reason"],
+    "outcomes": [["arachnid2",17,"draw","time_limit"],["arachnid2",29,"draw","time_limit"],["arachnid2",41,"draw","time_limit"],["niveus",17,"draw","time_limit"],["niveus",29,"draw","time_limit"],["niveus",41,"draw","time_limit"]],
+    "scope": "Historical outcomes and runtime identity; current-module full-match metrics are recorded above."
+  },
+  "limitations": ["Balance and decisive endgame survivor search remain unproven. No current long-run sample reaches complete enemy-structure removal, so survivor cleanup is not exercised.","Most screened large-map scenarios have disconnected base floor graphs: 11 of 12 terminal samples report bases_connected = 0. Counts do not identify the physical cause.","All twelve current 900-second screens, six current 2400-second native matches, one compiled 900-second match and six previous 2400-second matches ended in time-limit draws. Base pressure remains weak; no decisive fair win rate is established.","The earlier 40-minute native game module has a different SHA256. Its results are separate historical evidence. Every current-checkpoint result also predates the unbuilt mover-retry navigation fix and is not final-release validation.","Native 60-second and interpreted/compiled-QVM 30-second repeats establish short repeatability within each mode. The long native and compiled runs establish execution, not full-match replay or cross-mode equality.","The 15-second native realtime/fast comparison has no combat. It verifies pacing, normal physics ticks and early detailed telemetry only.","Telemetry samples occur every 30 game seconds; first-observed connectivity, HQ destruction/reconstruction and terminal core health are sampled evidence, not exact event times.","Provenance uses relative local suite IDs. Absolute machine paths, PIDs, commands, private home directories and logs are omitted."]
+}

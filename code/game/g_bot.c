@@ -5,6 +5,8 @@
 botState_t g_botStates[ MAX_CLIENTS ];
 vmCvar_t g_botThink, g_botSkill, g_botBuild, g_botDebug;
 static int botSerial;
+static int botFrameStart;
+static int botFirstTurn[ MAX_CLIENTS ], botPlanningTurn;
 
 static int BotClamp( int value, int low, int high )
 {
@@ -147,6 +149,9 @@ static void BotRestore( int clientNum )
 void G_BotInit( void )
 {
   memset( g_botStates, 0, sizeof( g_botStates ) );
+  memset( botFirstTurn, 0, sizeof( botFirstTurn ) );
+  botFrameStart = 0;
+  botPlanningTurn = 0;
   trap_Cvar_Register( &g_botThink, "g_botThink", "100", CVAR_ARCHIVE );
   trap_Cvar_Register( &g_botSkill, "g_botSkill", "5", CVAR_ARCHIVE );
   trap_Cvar_Register( &g_botBuild, "g_botBuild", "1", CVAR_ARCHIVE );
@@ -170,6 +175,7 @@ void G_BotShutdown( void )
 void G_BotDisconnect( int clientNum )
 {
   memset( &g_botStates[ clientNum ], 0, sizeof( g_botStates[ clientNum ] ) );
+  botFirstTurn[ clientNum ] = 0;
   G_BotNavReset( clientNum );
   G_BotBuildReset( clientNum );
 }
@@ -244,7 +250,7 @@ static gentity_t *BotStrategicGoal( gentity_t *ent, botState_t *bot )
 
 void G_BotFrame( void )
 {
-  int i, j;
+  int i, j, visited, first = -1;
   gentity_t *ent, *goal, *service;
   vec3_t servicePoint, teamGoal;
   botState_t *bot;
@@ -258,8 +264,22 @@ void G_BotFrame( void )
   G_BotBuildFrame( );
   G_BotCombatFrame( );
   G_BotTeamFrame( );
-  for( i = 0; i < level.maxclients; i++ )
+  /* Navigation checks share a bounded frame budget. Give the oldest eligible
+   * actor the first opportunity, including bots thinking on different frames.
+   * Frame-only rotation could skip odd IDs when synchronized 100 ms thinkers
+   * run on every other 50 ms frame. Physics ordering remains the server's own. */
+  for( visited = 0; visited < level.maxclients; visited++ )
   {
+    i = ( botFrameStart + visited ) % level.maxclients;
+    if( !G_BotIsBot( i ) || level.clients[ i ].pers.connected != CON_CONNECTED ||
+        level.clients[ i ].sess.spectatorState != SPECTATOR_NOT ||
+        g_entities[ i ].health <= 0 || level.time < g_botStates[ i ].nextThink ) continue;
+    if( first < 0 || botFirstTurn[ i ] < botFirstTurn[ first ] ) first = i;
+  }
+  if( first >= 0 ) botFrameStart = first;
+  for( visited = 0; visited < level.maxclients; visited++ )
+  {
+    i = ( botFrameStart + visited ) % level.maxclients;
     if( !G_BotIsBot( i ) || level.clients[ i ].pers.connected != CON_CONNECTED ) continue;
     ent = &g_entities[ i ];
     bot = &g_botStates[ i ];
@@ -302,6 +322,7 @@ void G_BotFrame( void )
     else if( ent->health <= 0 ) memset( cmd, 0, sizeof( *cmd ) );
     else if( level.time >= bot->nextThink )
     {
+      if( i == first ) botFirstTurn[ i ] = ++botPlanningTurn;
       memset( cmd, 0, sizeof( *cmd ) );
       for( j = 0; j < 3; j++ )
         cmd->angles[ j ] = ANGLE2SHORT( ent->client->ps.viewangles[ j ] ) -
@@ -371,6 +392,7 @@ void G_BotFrame( void )
     ent->client->pers.cmd = *cmd;
     ent->client->lastCmdTime = level.time;
   }
+  if( first >= 0 ) botFrameStart = ( botFrameStart + 1 ) % level.maxclients;
 }
 
 static qboolean BotAdd( team_t team, int skill, const char *name, botRole_t role )

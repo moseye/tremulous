@@ -52,10 +52,16 @@ void G_BotNavMetrics( int *nodes, int *links, int *expanded,
 void G_BotNavConnectivity( int *components, int *largest, int *basesConnected );
 void G_BotNavDiagnostics( int *fallbacks, int *failures, int *stuckEscapes );
 void G_BotNavClassMetrics( int *nodes, int *links, int *rejected, int *deferred );
+void G_BotNavMoverMetrics( int *pending, int *attempts, int *resolved,
+                          int *rejected, int *dropped );
 void G_BotNavDebugJSON( gentity_t *ent, char *out, int size );
 qboolean G_BotNavRallyPoint( const vec3_t base, const vec3_t objective, vec3_t point );
 qboolean G_BotNavRallyPointForClass( const vec3_t base, const vec3_t objective,
                                     class_t classNum, vec3_t point );
+/* Prospective legal class origin: -1 pending, 0 blocked, 1 verified full route. */
+int G_BotNavClassReachable( gentity_t *ent, class_t classNum,
+                            const vec3_t newOrigin, const vec3_t goal );
+int G_BotNavScoutPoint( gentity_t *ent, team_t team, vec3_t point );
 void G_BotNavSafeMove( gentity_t *ent, usercmd_t *cmd );
 qboolean G_BotNavConsoleCommand( const char *command );
 
@@ -79,10 +85,12 @@ void G_BotTeamFrame( void );
 qboolean G_BotTeamGoal( gentity_t *ent, botState_t *bot, vec3_t goal );
 qboolean G_BotTeamRally( gentity_t *ent, botState_t *bot, vec3_t goal );
 qboolean G_BotTeamAdvance( gentity_t *ent, botState_t *bot, vec3_t goal );
+qboolean G_BotTeamAssaultPoint( team_t team, vec3_t goal );
 float G_BotTeamTargetBonus( gentity_t *ent, gentity_t *target );
 void G_BotTeamMetrics( team_t team, int *waves, int *rallied, int *dispatches, int *focus );
 void G_BotTeamCohortMetrics( team_t team, int *launchedMembers, int *peakGroup,
                             int *advanceOrders, int *activeMembers );
+void G_BotTeamProgressMetrics( team_t team, int *renewals, int *recalls );
 
 void G_BotBenchmarkInit( void );
 void G_BotBenchmarkShutdown( void );

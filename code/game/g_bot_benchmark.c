@@ -60,6 +60,7 @@ static void BotBenchTeamJSON( team_t team, char *out, int size )
   int spawns = 0, usable = 0, pending = 0, blocked = 0, hp = 0, skill[ 10 ];
   int waves, rallied, dispatches, focus;
   int launchedMembers, peakGroup, advanceOrders, activeMembers;
+  int progressRenewals, timedRecalls;
   int queued = G_GetSpawnQueueLength( team == TEAM_HUMANS ?
                                      &level.humanSpawnQueue : &level.alienSpawnQueue );
   char classes[ 512 ], weapons[ 768 ];
@@ -101,6 +102,7 @@ static void BotBenchTeamJSON( team_t team, char *out, int size )
   BotBenchArray( weapons, sizeof( weapons ), stats->weapons, WP_NUM_WEAPONS );
   G_BotTeamMetrics( team, &waves, &rallied, &dispatches, &focus );
   G_BotTeamCohortMetrics( team, &launchedMembers, &peakGroup, &advanceOrders, &activeMembers );
+  G_BotTeamProgressMetrics( team, &progressRenewals, &timedRecalls );
   Com_sprintf( out, size,
     "{\"bots\":%d,\"alive\":%d,\"queued\":%d,\"builders\":%d,"
     "\"skill_histogram\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
@@ -114,6 +116,7 @@ static void BotBenchTeamJSON( team_t team, char *out, int size )
     "\"snapshot_blocked_spawns\":%d,\"desired_spawns\":%d,"
     "\"attack_waves\":%d,\"rallied_players\":%d,\"defensive_dispatches\":%d,\"focus_target\":%d,"
     "\"launched_members\":%d,\"peak_group\":%d,\"advance_orders\":%d,\"active_assault_members\":%d,"
+    "\"progress_renewals\":%d,\"timed_wave_recalls\":%d,"
     "\"stage\":%d,\"free_build_points\":%d,"
     "\"class_player_seconds\":%s,\"weapon_player_seconds\":%s}",
     bots, alive, queued, builders,
@@ -128,6 +131,7 @@ static void BotBenchTeamJSON( team_t team, char *out, int size )
     buildings, hp, coreHealth, spawns, usable, pending,
     blocked, G_BotBuildDemand( team ), waves, rallied, dispatches, focus,
     launchedMembers, peakGroup, advanceOrders, activeMembers,
+    progressRenewals, timedRecalls,
     team == TEAM_HUMANS ? g_humanStage.integer : g_alienStage.integer,
     team == TEAM_HUMANS ? level.humanBuildPoints : level.alienBuildPoints,
     classes, weapons );
@@ -201,12 +205,15 @@ static void BotBenchRecord( const char *event, const char *winner, const char *r
   int components, largest, basesConnected;
   int fallbacks, failures, stuckEscapes;
   int classNodes, classLinks, classRejected, classDeferred;
+  int moverPending, moverAttempts, moverResolved, moverRejected, moverDropped;
   BotBenchTeamJSON( TEAM_HUMANS, humans, sizeof( humans ) );
   BotBenchTeamJSON( TEAM_ALIENS, aliens, sizeof( aliens ) );
   G_BotNavMetrics( &nodes, &links, &expanded, &plans, &routes );
   G_BotNavConnectivity( &components, &largest, &basesConnected );
   G_BotNavDiagnostics( &fallbacks, &failures, &stuckEscapes );
   G_BotNavClassMetrics( &classNodes, &classLinks, &classRejected, &classDeferred );
+  G_BotNavMoverMetrics( &moverPending, &moverAttempts, &moverResolved,
+                        &moverRejected, &moverDropped );
   Com_sprintf( line, sizeof( line ),
     "{\"schema\":1,\"event\":\"%s\",\"map\":\"%s\",\"seed\":%d,"
     "\"elapsed_ms\":%d,\"wall_elapsed_ms\":%d,\"winner\":\"%s\",\"reason\":\"%s\","
@@ -218,7 +225,9 @@ static void BotBenchRecord( const char *event, const char *winner, const char *r
     "\"components\":%d,\"largest_component\":%d,\"bases_connected\":%d,"
     "\"partial_routes\":%d,\"failed_full_routes\":%d,\"stuck_escapes\":%d,"
     "\"class_checked_nodes\":%d,\"class_checked_links\":%d,"
-    "\"class_rejected_queries\":%d,\"class_deferred_queries\":%d}}\n",
+    "\"class_rejected_queries\":%d,\"class_deferred_queries\":%d,"
+    "\"mover_pending\":%d,\"mover_retry_attempts\":%d,\"mover_resolved_attempts\":%d,"
+    "\"mover_rejected_attempts\":%d,\"mover_dropped\":%d}}\n",
     event, benchMap, benchSeed, level.time - benchStart,
     trap_Milliseconds( ) - benchWallStart, winner, reason,
     benchFrames, benchMinStep, benchMaxStep,
@@ -226,7 +235,8 @@ static void BotBenchRecord( const char *event, const char *winner, const char *r
     trap_Cvar_VariableIntegerValue( "g_botNavTuning" ),
     trap_Cvar_VariableIntegerValue( "g_botNavNodes" ), humans, aliens,
     nodes, links, expanded, plans, routes, components, largest, basesConnected,
-    fallbacks, failures, stuckEscapes, classNodes, classLinks, classRejected, classDeferred );
+    fallbacks, failures, stuckEscapes, classNodes, classLinks, classRejected, classDeferred,
+    moverPending, moverAttempts, moverResolved, moverRejected, moverDropped );
   if( trap_Cvar_VariableIntegerValue( "g_botBenchmarkDetails" ) )
   {
     length = strlen( line );

@@ -46,19 +46,18 @@ still needs a surviving, usable spawn building for queued bots to spawn.
 Run `Play 16 vs 16 bots.cmd` for 16 bots on each team, varied skills in a bell
 curve centered at 5.5, with 40 client
 slots so human players can join. `Dedicated 16 vs 16 bots.cmd` starts the same
-match on a separate server. ATCS is compact and can become crowded at this size.
+match on a separate server. Both execute `bots16.cfg`, which loads the larger
+Arachnid2 map and enables coordinated attacks, queue-scaled spawn building,
+navigation tuning and the measured human aim profile.
 
 To expand a running local match, enter these commands in order:
 
 ```text
-set sv_maxclients 40
-map atcs
-bot fill humans 16 bell
-bot fill aliens 16 bell
+exec bots16.cfg
 bot list
 ```
 
-Increasing `sv_maxclients` takes effect on a full map load. `map atcs` restarts
+Increasing `sv_maxclients` takes effect on a full map load. `map arachnid2` restarts
 the match; `map_restart 0` also reloads fully when that limit changes. Each bot and
 human player uses a slot. The engine limit is 64 total clients, so 31 bots on
 each team leave two human slots (`set sv_maxclients 64`). Spawn queues still
@@ -102,6 +101,7 @@ case-insensitive full bot name also works. Quote names containing spaces.
 | `bot add <humans\|aliens> [skill\|bell] [name] [attack\|defend\|build]` | Add one bot; the default role is `attack`. `bell` samples its skill from the distribution. |
 | `bot fill <humans\|aliens> <bot count> [skill\|bell]` | Adjust that team's number of bots. `bell` distributes skills across the resulting team, including existing bots. Human players do not count. |
 | `bot remove <id\|name\|all>` | Remove matching bots and free their slots. |
+| `bot tactics` | Inspect attack waves, dispatched members, peak group size, active assault members, movement orders and spawn demand. |
 | `bot skill <id\|name\|all> <1-10\|bell>` | Change skill immediately; `all bell` spreads skills across all bots. |
 | `bot role <id\|name\|all> <attack\|defend\|build>` | Change the requested role. |
 | `bot team <id\|name> <humans\|aliens\|spectator>` | Move one bot to a team, or leave it spectating. |
@@ -121,9 +121,12 @@ bot team Ada humans
 bot remove all
 ```
 
-When filling an empty team, the first newly added bot is a builder and later
-bots are attackers. Filling an already populated team does not rebalance its
-roles. Use `bot role` to make those choices explicitly.
+With teamwork enabled, filling a team reserves builders and defenders in
+proportion to its size. A new 16-bot team has two builders, two defenders and
+twelve attackers. Expanding a team adds any missing support roles among new
+bots, preserving existing assignments. With teamwork disabled, the first bot
+on an empty team is a builder and later bots are attackers. Use `bot role` to
+make explicit changes.
 
 For `bell`, evenly spaced normal-distribution quantiles create a balanced spread
 and assignments are shuffled so bot IDs and roles do not determine strength.
@@ -139,6 +142,15 @@ Numeric skill settings still work. Skills persist across map restarts and loads.
 | `g_botSkill` | `5` | Default skill for subsequently added bots. |
 | `g_botBuild` | `1` | Enable or disable bot construction and repair behavior. |
 | `g_botDebug` | `0` | Add health, class, weapon, credits, position and target details to `bot list`. |
+| `g_botCombatTuning` | `0` | Enable human angular aim, finite turning, firing bursts, healing/evolution retreats and corrected alien pounces. |
+| `g_botHumanAimCone` | `3` | Base angular aim-error radius in degrees, scaled by skill; `bots16.cfg` uses `6`. |
+| `g_botHumanReaction` | `300` | Base target acquisition delay in milliseconds, scaled by skill; the 16v16 profile uses `600`. |
+| `g_botHumanTurnSpeed` | `240` | Base aim turning speed in degrees per second, scaled by skill; the 16v16 profile uses `160`. |
+| `g_botHumanFireDelay` | `160` | Base pause between firing bursts in milliseconds, scaled by skill; the 16v16 profile uses `300`. |
+| `g_botTeamwork` | `0` | Shared observed contacts, home defense, rally groups, escorts and assault orders; the 16v16 profile enables it. |
+| `g_botSpawnScale` | `0` | Scale spawn targets with team size and queues, prioritize capacity and check spacing/exits; the 16v16 profile enables it. |
+| `g_botNavTuning` | `0` | Enable the improved graph, anchoring and partial-route behavior; the 16v16 profile enables it. |
+| `g_botNavNodes` | `4096` | Maximum floor nodes, clamped to 1,024–8,192; takes effect on map load. The 16v16 profile uses `8192`. |
 
 For example, `set g_botDebug 1` followed by `bot list` is useful when investigating
 an idle or stuck bot. Changing the default skill does not change existing bots;
@@ -148,8 +160,23 @@ use `bot skill all 7` for that.
 
 **Attack** bots move toward enemy structures and engage visible opponents.
 **Defend** bots stay near friendly structures between fights. **Build** bots
-maintain the base and defend themselves against nearby enemies. Combat currently
-takes priority over construction and service trips.
+maintain the base and defend themselves against nearby enemies. Urgent builders
+limit combat attention to close threats so distant fights do not continually
+interrupt spawn construction.
+
+With teamwork enabled, attackers gather at a reachable floor rally point and
+launch groups of two to six. Durable/evolved leaders wait briefly for escorts;
+followers catch up when separated. Assault movement advances toward enemy
+spawns while retaining weapon aim, and yields to close threats, healing trips
+and active tramples. A healthy leader that can damage the objective can extend
+an expired assault by 15 seconds after making at least 96 units of new progress
+within the previous 25 seconds. Leader or objective changes reset that evidence;
+idle groups still return to gather. Nearby attackers concentrate on visible enemy structures.
+Teammates share verified sightings, retaining the observed position for at most
+20 seconds. After the enemy's buildings are gone, fighters stop gathering and
+search reachable floor areas and remembered contact locations. Patrol assignments
+spread coverage among teammates without supplying hidden enemy coordinates.
+Bots keep their assigned roles; builders continue maintaining the base.
 
 A human builder spawns with a construction kit and uses its blaster in combat,
 then restores the kit. A living human reassigned to building can exchange its
@@ -171,7 +198,12 @@ changes reaction delay, aim error and some weapon preferences. Hitscan weapons
 aim at the target; projectile attacks lead moving opponents. Advanced dragoon
 barbs and advanced granger blobs also receive gravity compensation. Basic
 friendly-fire checks reject shots through teammates or friendly buildings;
-they do not predict every possible collision or splash interaction.
+they do not predict every possible collision or splash interaction. Tuned human
+aim uses angular error held for short intervals, finite turning speed and pauses
+between bursts. Skill affects all four controls. Lucifer cannon charging still
+uses its normal hold/release behavior. Dragoon pounces charge on the ground and
+retain their damage payload during flight; melee aims at the near face of large
+structures.
 
 Humans start with a rifle, unless assigned to building. Their equipment tree
 prefers progressively stronger legal weapons as credits and stages permit:
@@ -187,7 +219,11 @@ normal medkit replenishment.
 Aliens attempt affordable, stage-legal evolution through the existing evolution
 tree. Builders remain grangers rather than spending their role on an attack
 class. Evolution uses the original overmind, nearby-human, wall-climbing,
-building-delay, credit and class-clearance checks. Combat supports automatic
+building-delay, credit and class-clearance checks. With combat tuning enabled,
+attackers also check whether the prospective form has a complete route to the
+enemy objective. Pending checks defer evolution; a known blocked route makes
+the bot try the next affordable form. This avoids spending credits on an alien
+that fits at home but cannot travel through the map. Combat supports automatic
 dretch biting, other melee attacks, marauder jumping, advanced marauder zap,
 advanced basilisk poison cloud, dragoon pouncing, advanced dragoon barbs,
 tyrant trample and advanced granger blobs. Navigation can use wall climbing
@@ -228,10 +264,21 @@ hazards matter to traversability. A* routes guide local, class-sized movement
 traces; short routes can operate before graph generation completes. Stuck
 recovery, jump attempts and wall-climbing escape behavior supplement routing.
 
-Graph generation is bounded: up to 4,096 floor nodes, 12 directed links per node,
+Graph generation is bounded: up to 8,192 floor nodes, 12 directed links per node,
 256 manual seeds and a generation trace budget per server frame. `botnav status`
 reports whether the graph is still growing. Graph nodes themselves are rebuilt
 on map initialization; only explicit manual seeds are saved.
+
+With navigation tuning enabled, floor connectors use the bot's actual footprint
+and standing height, including small aliens beneath overhangs. Wider classes can
+adjust a graph point's feet by at most an ordinary 18-unit step to fit ramps.
+Static connector proofs are cached briefly for the exact class and endpoints;
+hazards are checked again on reuse. Unknown checks and mover collisions are
+deferred. Directions blocked by moving doors are retained for bounded retries.
+Bots approach an already verified door-frontier node more closely to touch
+normal door triggers; the graph never creates a link across a closed door.
+Bots receive the first planning opportunity in turn so one client's
+queries cannot continually consume the shared class-check budget.
 
 | Command | Effect |
 | --- | --- |
@@ -270,6 +317,14 @@ With the portable launch commands above, files are written under
 location when different `fs_homepath` or `fs_game` settings are used. Distribute
 map-specific seed files in the corresponding `base/botnav/` directory or inside
 a PK3. Rebuilding reloads saved seeds and discards unsaved manual changes.
+
+## Fast parallel matches
+
+The patched dedicated server can run fixed-seed, offline matches without
+wall-clock pacing. The [benchmark guide](BOT_BENCHMARKS.md) covers parallel
+suites, paired configurations, actual VM verification, deterministic replay and
+base-pressure diagnostics. It uses normal physics and economy. Fast mode is
+offline; use the play launcher to spectate.
 
 ## Build from source
 
@@ -329,8 +384,13 @@ python tests/bot_smoke.py --server "C:\Games\Tremulous-Bots\tremded.exe" --basep
 python tests/bot_smoke.py --server "C:\Games\Tremulous-Bots\tremded.exe" --basepath "C:\Games\Tremulous-Bots" --vm 1 --duration 45
 python tests/bot_smoke.py --server "C:\Games\Tremulous-Bots\tremded.exe" --basepath "C:\Games\Tremulous-Bots" --vm 2 --duration 45
 python tests/bot_smoke.py --server "C:\Games\Tremulous-Bots\tremded.exe" --basepath "C:\Games\Tremulous-Bots" --vm 2 --duration 45 --economy
-python tests/bot_smoke.py --server "C:\Games\Tremulous-Bots\tremded.exe" --basepath "C:\Games\Tremulous-Bots" --vm 2 --duration 90 --bots-per-team 16 --bell-skills
+python tests/bot_smoke.py --server "C:\Games\Tremulous-Bots\tremded.exe" --basepath "C:\Games\Tremulous-Bots" --map arachnid2 --vm 2 --duration 90 --bots-per-team 16 --bell-skills --balanced-profile
 ```
+
+`--balanced-profile` applies and verifies the nine settings used by `bots16.cfg`
+before adding bots and after both kinds of map reload. Without it, the script
+uses the legacy defaults. Add it to the native/interpreted and economy commands
+above when checking the current 16v16 profile.
 
 `--economy` sets the existing passive-credit period to one second and stage
 thresholds to zero for that isolated test server. Shopping and evolution still
@@ -342,7 +402,7 @@ Read the script's result and server logs for each invocation. A successful build
 alone does not establish successful runtime behavior, and a short smoke test
 does not establish competent play on every map.
 
-The Windows x64 Release build was verified on ATCS using the native module,
+The earlier **v0.1.0-bots** Windows x64 release was verified on ATCS using the native module,
 the QVM interpreter and compiled QVM. Live checks cover both teams spawning,
 movement, collision-graph generation, saved navigation seeds, timeouts/inactivity,
 skill/role/team commands, invalid input, map restart/full reload, slot reuse and
@@ -352,13 +412,13 @@ construction and combat. Passed JSON reports accompany the portable package in
 `validation/`. These are bounded gameplay checks, not a guarantee of competent
 play on every map.
 
-The graphical client also passed an ATCS startup check with the OpenGL renderer,
+That release's graphical client also passed an ATCS startup check with the OpenGL renderer,
 UI/game/cgame QVMs, a local player and eight bots, followed by a clean quit. The
 original 1.1/GPP media lacks newer optional first-person weapon animation
 configuration files; those produce nonfatal log messages and use the available
 static weapon models.
 
-The mixed-skill 16-vs-16 run passed a 90-second live server check: 32 bot slots,
+Its mixed-skill 16-vs-16 run passed a 90-second live server check: 32 bot slots,
 the expected per-team skill histograms, movement, construction, combat, console
 controls and skill persistence on both map restarts and full reloads. Normal
 spawn queues and blocked spawns meant 12 humans and all 16 aliens had been
@@ -407,6 +467,8 @@ bundled compiler's C dialect.
 | `code/game/g_bot_nav.c` | Collision graph, A*, saved seeds, local steering and final movement safety checks. |
 | `code/game/g_bot_combat.c` | Targets, aiming, attacks, shop/evolution decisions and spawn loadouts. |
 | `code/game/g_bot_build.c` | Construction plans, placement scoring, builder reservations and human repairs. |
+| `code/game/g_bot_team.c` | Shared contacts/objectives, defensive reserves, rally groups, escorts and coordinated assault orders. |
+| `code/game/g_bot_benchmark.c` | Offline match control, actual gameplay counters, queue/class occupation and optional position/collision snapshots. |
 | `code/game/g_cmds.c` | Shared checked buy/sell/class-change operations used by players and bots. |
 | `code/game/g_active.c`, `g_main.c`, `g_client.c` | Frame integration, bot movement, connection/disconnection and voting behavior. |
 | `code/game/g_public.h`, `g_syscalls.c`, `g_syscalls.asm` | Engine/game bot syscall interface. |
@@ -439,9 +501,10 @@ for special movers or surfaces rather than assuming visible geometry is walkable
 - Base placement samples a small number of floor positions and a local choke
   score. It can choose awkward locations, leave space unused or fail in cramped
   bases. It does not construct elaborate forward bases or ceiling layouts.
-- Equipment and evolution trees are simple preferences, not team-level strategy.
-  Bots do not coordinate attack waves, identify every tactical threat, plan jetpack
-  flights or optimize class composition.
+- Equipment and evolution trees are simple preferences. Coordinated groups can
+  still disperse in combat, crowd chokepoints or fail to reach their objective.
+  Bots do not identify every tactical threat, plan jetpack flights or optimize
+  class composition.
 - Friendly-fire checks are basic. Explosive splash and moving teammates can still
   cause accidental damage under the server's normal friendly-fire settings.
 

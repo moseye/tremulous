@@ -20,6 +20,7 @@ typedef struct
 {
   int spawnCount, enterTime, target, nextAimSample, lastAimTime;
   int burstUntil, nextBurstTime, retreatUntil;
+  int evolveRouteRetry;
   team_t team;
   qboolean retreatEvolve;
   unsigned int randomState;
@@ -370,6 +371,7 @@ static qboolean BotCanUpgradeClass( gentity_t *ent )
   vec3_t origin;
   int i;
 
+  if( botCombatStates[ ent->s.number ].evolveRouteRetry > level.time ) return qfalse;
   if( !G_Overmind( ) ) return qfalse;
   for( i = 0; i < sizeof( botAttackClasses ) / sizeof( botAttackClasses[ 0 ] ); i++ )
   {
@@ -816,7 +818,13 @@ static void BotShop( gentity_t *ent, botState_t *bot )
 static void BotEvolve( gentity_t *ent, botState_t *bot )
 {
   class_t current = ent->client->pers.classSelection, desired;
-  int i;
+  botCombatState_t *state = &botCombatStates[ ent->s.number ];
+  gentity_t *objective;
+  vec3_t origin, goal;
+  qboolean checkRoute = qfalse, routeKnown = qfalse;
+  int i, reachable;
+
+  state->evolveRouteRetry = 0;
 
   if( bot->role == BOT_BUILD )
   {
@@ -828,6 +836,17 @@ static void BotEvolve( gentity_t *ent, botState_t *bot )
     return;
   }
 
+  if( g_botCombatTuning.integer && bot->role == BOT_ATTACK )
+  {
+    checkRoute = G_BotTeamAssaultPoint( bot->team, goal );
+    if( !checkRoute )
+    {
+      objective = G_BotFindBuildable( ent, BA_H_SPAWN, 0 );
+      if( !objective ) objective = G_BotFindBuildable( ent, BA_H_REACTOR, 0 );
+      if( objective )
+      { VectorCopy( objective->r.currentOrigin, goal ); checkRoute = qtrue; }
+    }
+  }
   for( i = 0; i < sizeof( botAttackClasses ) / sizeof( botAttackClasses[ 0 ] ); i++ )
   {
     desired = botAttackClasses[ i ];
@@ -838,6 +857,25 @@ static void BotEvolve( gentity_t *ent, botState_t *bot )
         BG_ClassCanEvolveFromTo( current, desired, ent->client->pers.credit,
                                 g_alienStage.integer, 0 ) >= 0 )
     {
+      if( checkRoute )
+      {
+        if( !G_RoomForClassChange( ent, desired, origin ) ) continue;
+        reachable = G_BotNavClassReachable( ent, desired, origin, goal );
+        if( reachable < 0 )
+        {
+          /* Keep travelling in the current form while bounded checks finish.
+           * Do not retreat for an evolution whose route is not yet proven. */
+          if( !routeKnown ) state->evolveRouteRetry = level.time + 2500;
+          return;
+        }
+        if( !reachable )
+        {
+          if( !routeKnown ) state->evolveRouteRetry = level.time + 2500;
+          continue;
+        }
+        routeKnown = qtrue;
+        state->evolveRouteRetry = 0;
+      }
       G_ChangeClass( ent, BG_Class( desired )->name );
       if( ent->client->pers.classSelection == desired )
         return;

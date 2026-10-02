@@ -114,11 +114,42 @@ routes and stuck escapes. Inspect early samples for connection between bases:
 after a base is destroyed, its connectivity result no longer describes the
 earlier route. Spawn statistics count physical spawns separately from evolution.
 Construction statistics count buildings actually placed through normal rules.
-Class-clearance counters describe the bounded checks used to validate larger
-alien hulls and their jump limits. A pending class check means that the bot is
+`progress_renewals` counts expired assault timers extended after a healthy,
+damage-capable leader made new progress toward the same objective.
+`timed_wave_recalls` counts surviving waves that expired, rather than players
+or groups lost through deaths. These counters help distinguish useful attacks
+from repeated trips back to the gathering point.
+Class-clearance counters include movement, rally/search and prospective evolution
+checks used to validate actual hulls and their jump limits. Evolution queries do
+not increment movement route-plan totals. A pending class check means that the bot is
 waiting for a safe route; it is not counted as a completed route. Detailed
 snapshots include the actual hull, next waypoint, collision results and the age
 of the most recent movement safety decision to help diagnose crowded exits.
+
+Moving-door diagnostics report `mover_pending`, `mover_retry_attempts`,
+`mover_resolved_attempts`, `mover_rejected_attempts` and `mover_dropped`.
+Generation retains up to 512 blocked node/direction pairs and retries up to four
+per frame within the generation work allowance. A resolved attempt passed the
+same supported collision checks; it does not necessarily add a new link if that
+link already exists. A rejected attempt has a known failure. The queue does not
+force doors open or prove a route through a closed door. Failed class-route
+queries remain pending when their reached component contains a queued frontier.
+
+## Recorded checkpoint
+
+[The 2026-10-02 checkpoint](../tests/results/bot-balance-checkpoint-2026-10-02.json)
+contains sanitized hashes, settings and results from the fair-planning build
+before the moving-door retry fix. It records six native 40-minute 16v16 matches
+on Arachnid2/Niveus, a compiled-QVM 15-minute Niveus match and twelve 15-minute
+matches across four additional maps. The native long suite simulated 14,400
+game seconds in 215.53 wall seconds across three workers. All six reached the
+time limit; alien building damage remained very low. Eleven of the twelve
+additional-map runs never connected their bases. These results identify work
+still needed; they do not establish balanced play or certify a later build.
+
+The checkpoint also records matching native real-time/fast/replayed telemetry
+for a 15-second startup scenario. Those checks prove tick and replay behavior
+for that scenario; the short equivalence run did not include combat.
 
 Throughput depends on the CPU, VM, map, congestion and combat. Both time spent
 inside the simulation and total process time including startup are reported.
