@@ -120,6 +120,8 @@ def main():
         'Run "Play with bots.cmd", then join a team with the usual game menu.\n'
         'For a larger match, run "Play 16 vs 16 bots.cmd" (32 bots, 40 client slots).\n'
         'The larger launchers use a bell-shaped skill spread centered around 5-6.\n'
+        'To watch, choose Spectators or enter "team spectator" in the game console.\n'
+        '"follow" toggles a bot view; "follownext"/"followprev" change bots.\n'
         '"Dedicated 16 vs 16 bots.cmd" starts that match as a separate server.\n'
         'Open the console (~) to manage bots.\n\n'
         'set sv_maxclients 40\nmap atcs\n'

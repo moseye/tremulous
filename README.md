@@ -17,6 +17,12 @@ or server console.
 4. Join humans or aliens through the normal game menu, or stay in spectator
    mode to watch.
 
+To watch the bots, choose **Spectators** in the team menu, or open the console
+with `~` and enter `team spectator`. Close the console to fly around with the
+movement keys and mouse. Enter `follow` to switch to a bot's view and use
+`follownext` or `followprev` to change bots; `follow` again returns to free flight.
+You can also use `bot list` to find an alive bot's ID, then `follow <id>`.
+
 The archive includes the patched engine, game modules, stock game media, eight
 maps and required Windows runtimes. You do not need an existing Tremulous
 installation, Python or a compiler to play. The downloadable binary is for

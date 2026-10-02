@@ -65,6 +65,14 @@ each team leave two human slots (`set sv_maxclients 64`). Spawn queues still
 apply, so a larger team takes longer to enter the map. If AI causes server
 hitches, try `set g_botThink 150` or `200`; movement still runs each server frame.
 
+### Spectate the match
+
+After launching, choose **Spectators** in the team menu or enter `team spectator`
+in the game console (`~`). Use the mouse and movement keys for free flight.
+`follow` toggles following a bot and free flight; `follownext` and `followprev`
+cycle through bots. `bot list` shows IDs, and `follow <id>` follows a particular
+alive bot. Let the normal spawn queues fill before expecting a full army in play.
+
 The separate `user` home path keeps this build's configuration and saved
 navigation seeds in the portable folder. It also helps avoid loading a different
 game module from an existing installation's home directory.
