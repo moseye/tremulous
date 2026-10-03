@@ -188,7 +188,7 @@ reachable areas. Builders keep their construction reservations and support roles
 
 Bots occasionally use the game's normal taunt gesture after a confirmed enemy
 kill or while resting near teammates. They avoid gesturing during attacks,
-healing, tactical retreats, wall attachment or injury, and accepted gestures
+healing, tactical retreats, wall attachment or low health, and accepted gestures
 have a 20–40 second cooldown. `set g_botTaunt 0` disables AI gestures. The game
 plays the normal animation and taunt event; bots do not send chat messages.
 

@@ -376,7 +376,8 @@ def assertions(name, snapshots):
               math.dist(b["position"], ally["position"]) < math.dist(actor["position"], ally["position"])-64
               for b in approaching), [b["position"] for b in approaching])
         commits = [s for s in snapshots if s["phase"].startswith("commit_")]
-        merged = next((s for s in commits if group_id(bot(s, 6)) == group_id(bot(s, 7)) and
+        merged = next((s for s in snapshots if s["time_ms"] > initial["time_ms"] and
+                       group_id(bot(s, 6)) == group_id(bot(s, 7)) and
                        min(bot(s, i)["tactics"]["group_size"] for i in (6, 7)) >= 2 and
                        math.dist(bot(s, 6)["position"], bot(s, 7)["position"]) <= 450), None)
         pair = [bot(merged or by_phase["ally_released"], i) for i in (6, 7)]

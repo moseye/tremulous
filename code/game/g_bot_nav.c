@@ -1306,9 +1306,9 @@ static int BotNavAnchorForClass( const vec3_t point, class_t classNum,
   return -1;
 }
 
-/* Reservations are advisory costs, never collision permissions. Other squads'
- * next corridor segments encourage an open alternative, while escorts retain
- * their leader's stable spatial preference. Rebuild from living allies so
+/* Reservations are advisory costs, never collision permissions. Other groups'
+ * next corridor segments encourage an open alternative; current group members
+ * share a corridor preference. Rebuild from living allies so
  * abandoned paths, deaths and respawns cannot leave permanent reservations. */
 static void BotNavTraffic( gentity_t *ent, botNavClient_t *client )
 {

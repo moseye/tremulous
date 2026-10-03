@@ -34,7 +34,7 @@ with two builders, two defenders and twelve attackers. Nearby fighters form
 and reshape groups around current contacts. Outnumbered
 groups retreat toward reinforcements, while aliens converge for swarm attacks
 and can use checked local wall flanks. Groups prefer different safe corridors
-and avoid other groups' reserved paths. Bots also use occasional taunt gestures.
+and add congestion costs for other groups' upcoming paths. Bots also use occasional taunt gestures.
 Human aim has skill-dependent angular error, reaction time, turning speed and
 pauses between firing bursts.
 
