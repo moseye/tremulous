@@ -141,6 +141,8 @@ def retreat_scenario(team, role="attack", paired=False):
             x, dy = ((220, -220), (280, -110), (320, 0), (280, 110), (220, 220))[n]
         else:
             x, dy = 220+n*48, (n % 2)*64
+        if team == "humans":
+            x += 180
         place(lines, ident, x, y+dy, ident < 6, 180)
     for n, ident in enumerate(friends):
         place(lines, ident, -1800+n*48, y+800, ident < 6)
@@ -317,6 +319,13 @@ def assertions(name, snapshots):
               {"initial_distance": initial_distance, "observed_distances": distances,
                "retreating": [retreating(b) for b in disadvantaged]})
         before = bot(by_phase["reinforcement_arrived"], actor)
+        nearest_enemy_distance = min(math.dist(before["position"], b["position"]) for b in enemies)
+        check("visible_enemy_contact_remains_at_reinforcement", before["tactics"]["nearby_enemies"] > 0 and
+              before["tactics"]["own_visible_enemies"] > 0 and nearest_enemy_distance <= 850,
+              {"nearest_enemy_distance": nearest_enemy_distance, "context": before["tactics"]})
+        if actor == 0:
+            check("human_resume_target_is_beyond_preferred_strafe_range", nearest_enemy_distance > 562.5,
+                  {"nearest_enemy_distance": nearest_enemy_distance, "strafe_threshold": 562.5})
         after_distances = [math.dist(b["position"], threat) for b in reinforced]
         check("reinforcements_resume_physical_attack", any(not retreating(b) for b in reinforced) and
               min(after_distances) < math.dist(before["position"], threat)-32,
@@ -469,7 +478,7 @@ def run_case(server, basepath, home, name, vm, fixture, timeout):
     (home / "base").mkdir(parents=True)
     with (home / "base" / fixture.name).open("wb") as output:
         output.write(fixture.read_bytes())
-    lines = SCENARIOS[name]()
+    lines = closed_scenario(name)
     (home / "base" / "scenario.cfg").write_text("\n".join(lines) + "\n")
     command = [str(server), "+set", "fs_basepath", str(basepath), "+set", "fs_homepath", str(home),
                "+set", "dedicated", "1", "+set", "net_enabled", "0", "+set", "sv_fastSim", "1",
@@ -504,6 +513,10 @@ def run_case(server, basepath, home, name, vm, fixture, timeout):
         errors.append("process_timeout_or_failure")
     if modes != [expected_mode]:
         errors.append("actual_module_mode_not_verified")
+    probe_values = re.findall(r'^"g_botProbe" is:"([^"\n]+)"', text, re.M)
+    probe_closed = bool(probe_values) and probe_values[-1] == "0"
+    if not probe_closed:
+        errors.append("probe_not_disabled_before_exit")
     settings_evidence = bot_benchmark.bot_settings_evidence(PROFILE, text, require_all=True)
     if not settings_evidence["verified"]:
         errors.append("registered_fixture_profile_not_verified")
@@ -513,8 +526,10 @@ def run_case(server, basepath, home, name, vm, fixture, timeout):
         errors.append("missing_actual_snapshots")
     if any(s["fixture_mode"] != 1 or s["sv_cheats"] != 1 or s["net_enabled"] != 0 or s["sv_fps"] != 20 for s in snapshots):
         errors.append("fixture_guards_not_verified")
-    if any(b["time_ms"]-a["time_ms"] != 50*(b["frame"]-a["frame"])
-           for a, b in zip(snapshots, snapshots[1:])):
+    normal_ticks = len(snapshots) >= 2 and snapshots[-1]["frame"] > snapshots[0]["frame"] and all(
+        b["time_ms"]-a["time_ms"] == 50*(b["frame"]-a["frame"])
+        for a, b in zip(snapshots, snapshots[1:]))
+    if not normal_ticks:
         errors.append("non_normal_50ms_ticks")
     checks = []
     if not errors:
@@ -523,10 +538,13 @@ def run_case(server, basepath, home, name, vm, fixture, timeout):
         except (KeyError, StopIteration, ValueError) as error:
             errors.append("missing_or_invalid_observation:" + str(error))
     report = {"schema": 1, "scenario": name, "requested_vm": vm, "observed_modes": modes,
+              "observed_engine_versions": sorted(set(re.findall(r'\b1\.2\.0_g[0-9a-f]+\b', text))),
               "scope": "Offline cheat fixture with staged/paused/god actors; excluded from normal-rules balance and win-rate evidence.",
               "exit_code": process.returncode, "timed_out": timed_out,
               "wall_seconds": time.monotonic()-started, "errors": errors, "checks": checks,
               "bot_settings_verification": settings_evidence,
+              "probe_disabled_before_exit": probe_closed,
+              "normal_50ms_ticks_verified": normal_ticks,
               "scenario_overrides": {"g_botTaunt": "0"} if name == "disabled_taunts" else {},
               "passed": not errors and bool(checks) and all(c["passed"] for c in checks),
               "records_sha256": sha(path) if path.exists() else None,
@@ -534,6 +552,12 @@ def run_case(server, basepath, home, name, vm, fixture, timeout):
               "snapshot_count": len(snapshots)}
     (home / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     return report
+
+
+def closed_scenario(name):
+    lines = SCENARIOS[name]()
+    assert lines[-1] == "quit"
+    return lines[:-1] + ["set g_botProbe 0", "g_botProbe", "quit"]
 
 
 def main():
@@ -555,7 +579,7 @@ def main():
     print("Fixture:", output, flush=True)
     if not opt.run:
         for name in opt.scenario or SCENARIOS:
-            (output / (name + ".cfg")).write_text("\n".join(SCENARIOS[name]()) + "\n")
+            (output / (name + ".cfg")).write_text("\n".join(closed_scenario(name)) + "\n")
         return
     server, basepath = opt.server.resolve(), opt.basepath.resolve()
     files = [server, basepath / "base/game.dll", basepath / "base/vm/game.qvm"]
