@@ -17,6 +17,8 @@ import time
 import uuid
 import zipfile
 
+import bot_benchmark
+
 
 MAP = "bot_behavior_fixtures"
 PROFILE = {
@@ -83,7 +85,7 @@ def generate_map(path):
 
 def start(humans=6, aliens=6):
     lines = ["set " + k + " " + v for k, v in PROFILE.items()]
-    lines += ["devmap " + MAP, "wait 4", "vminfo", "g_botProbe", "sv_cheats",
+    lines += ["devmap " + MAP, "wait 4", "vminfo", "cvarlist g_bot*", "g_botProbe", "sv_cheats",
               f"bot fill humans {humans} bell", f"bot fill aliens {aliens} bell",
               "bot role all attack"]
     for ident in range(humans + aliens):
@@ -128,16 +130,20 @@ def group_scenario():
     return lines + ["quit"]
 
 
-def retreat_scenario(team):
+def retreat_scenario(team, role="attack"):
     lines = start()
     actor, friends, enemies, y = ((0, range(1, 6), range(6, 11), -1024) if team == "humans"
                                  else (6, range(7, 12), range(0, 5), 1024))
+    lines += [f"bot role {actor} {role}"]
     place(lines, actor, 0, y, actor < 6)
     for n, ident in enumerate(enemies):
         place(lines, ident, 220+n*48, y+(n % 2)*64, ident < 6, 180)
     for n, ident in enumerate(friends):
         place(lines, ident, -1800+n*48, y+800, ident < 6)
-    lines += [f"botprobe pause {actor} 0", "botprobe snapshot disadvantaged_start"]
+    # Let the ordinary perception pass observe the staged threat while the
+    # actor remains paused; the first movement then has a known disadvantage.
+    sample(lines, "disadvantaged_start", 12)
+    lines += [f"botprobe pause {actor} 0"]
     for i in range(12):
         sample(lines, "disadvantaged_" + str(i), 5)
     for n, ident in enumerate(friends):
@@ -148,15 +154,34 @@ def retreat_scenario(team):
     return lines + ["quit"]
 
 
+def swarm_scenario():
+    lines = start()
+    place(lines, 0, 300, 0)
+    for ident in range(1, 6):
+        place(lines, ident, 2200+ident*48, -1700)
+    place(lines, 6, 0, 0, False)
+    place(lines, 7, -700, 0, False)
+    for ident in range(8, 12):
+        place(lines, ident, 2200+(ident-8)*48, 1700, False)
+    sample(lines, "swarm_start", 12)
+    lines += ["botprobe pause 6 0"]
+    for i in range(12):
+        sample(lines, "join_" + str(i), 5)
+    lines += ["botprobe snapshot swarm_merge", "botprobe pause 7 0"]
+    for i in range(48):
+        sample(lines, "commit_" + str(i), 5)
+    return lines + ["quit"]
+
+
 def taunt_scenario():
     lines = start()
     # A direct gesture asks Pmove to accept it; it does not count as an AI taunt.
     sample(lines, "gesture_before", 2)
-    lines += ["botprobe gesture 0 50"]
+    lines += ["botprobe gesture 0 100"]
     sample(lines, "gesture_accepted", 2)
     lines += ["botprobe gesture 0 500"]
     sample(lines, "gesture_timer_blocks_repeat", 2)
-    sample(lines, "gesture_finished", 30)
+    sample(lines, "gesture_finished", 60)
     # Activate a healthy actor with allies, kill a staged enemy via ordinary
     # server damage, then leave enemies far away so safe celebration can occur.
     place(lines, 1, -1000, -1024)
@@ -194,7 +219,8 @@ def wall_scenario():
     place(lines, 0, 220, 2500)
     for ident, x, y in ((6, -96, 2436), (7, -160, 2460), (8, -224, 2436), (9, -288, 2460)):
         place(lines, ident, x, y, False)
-    lines += ["botprobe pause 6 0", "botprobe snapshot wall_start"]
+    sample(lines, "wall_start", 12)
+    lines += ["botprobe pause 6 0"]
     for i in range(48):
         sample(lines, "wall_" + str(i), 5)
     return lines + ["quit"]
@@ -214,6 +240,9 @@ def disabled_taunts_scenario():
 
 SCENARIOS = {"dynamic_groups": group_scenario, "retreat_humans": lambda: retreat_scenario("humans"),
              "retreat_aliens": lambda: retreat_scenario("aliens"), "accepted_taunts": taunt_scenario,
+             "defender_humans": lambda: retreat_scenario("humans", "defend"),
+             "defender_aliens": lambda: retreat_scenario("aliens", "defend"),
+             "organic_swarm": swarm_scenario,
              "disabled_taunts": disabled_taunts_scenario, "autonomous_wall": wall_scenario}
 
 
@@ -256,7 +285,7 @@ def assertions(name, snapshots):
                   all(group_id(b) > 0 for b in reinforced) and
                   bot(by_phase["reinforced"], base+1)["fixture_spawn_generation"] > dead["fixture_spawn_generation"],
                   {"group_ids": [group_id(b) for b in reinforced]})
-    elif name.startswith("retreat_"):
+    elif name.startswith(("retreat_", "defender_")):
         actor = 0 if name.endswith("humans") else 6
         initial = bot(by_phase["disadvantaged_start"], actor)
         disadvantaged = [bot(s, actor) for s in snapshots if s["phase"].startswith("disadvantaged_") and s["phase"] != "disadvantaged_start"]
@@ -277,6 +306,43 @@ def assertions(name, snapshots):
         generations = {(b["fixture_spawn_generation"], b["fixture_placement_generation"]) for b in
                        [initial, *disadvantaged, before, *reinforced]}
         check("actor_moves_without_fixture_reposition", len(generations) == 1, sorted(generations))
+        if name.startswith("defender_"):
+            check("actor_retains_defender_role", all(b["role"] == 1 for b in
+                  [initial, *disadvantaged, before, *reinforced]),
+                  [b["role"] for b in [initial, *disadvantaged, before, *reinforced]])
+    elif name == "organic_swarm":
+        initial = by_phase["swarm_start"]
+        actor, ally = bot(initial, 6), bot(initial, 7)
+        joins = [s for s in snapshots if s["phase"].startswith("join_")]
+        check("isolated_alien_initially_lacks_local_support", actor["tactics"]["group_size"] == 1 and
+              actor["tactics"]["nearby_allies"] == 1 and math.dist(actor["position"], ally["position"]) >= 650,
+              {"actor": actor["tactics"], "initial_ally_distance": math.dist(actor["position"], ally["position"])})
+        approaching = [bot(s, 6) for s in joins]
+        check("solitary_alien_physically_converges_on_actual_ally", any(
+              math.dist(b["position"], ally["position"]) < math.dist(actor["position"], ally["position"])-64
+              for b in approaching), [b["position"] for b in approaching])
+        merged = by_phase["swarm_merge"]
+        pair = [bot(merged, i) for i in (6, 7)]
+        check("physical_neighbors_form_observed_group", group_id(pair[0]) == group_id(pair[1]) and
+              min(b["tactics"]["group_size"] for b in pair) >= 2 and
+              math.dist(pair[0]["position"], pair[1]["position"]) <= 450,
+              {"positions": [b["position"] for b in pair], "tactics": [b["tactics"] for b in pair]})
+        commits = [s for s in snapshots if s["phase"].startswith("commit_")]
+        target_position = bot(merged, 0)["position"]
+        distances = [[math.dist(bot(s, i)["position"], target_position) for i in (6, 7)] for s in commits]
+        check("merged_aliens_both_autonomously_approach_enemy", all(
+              min(row[k] for row in distances) < math.dist(pair[k]["position"], target_position)-64
+              for k in range(2)), {"positions_at_merge": [b["position"] for b in pair], "enemy_distances": distances})
+        near_target = [s["phase"] for s, row in zip(commits, distances) if max(row) <= 128 and
+                       all(bot(s, i)["target"] == 0 for i in (6, 7))]
+        check("both_enter_near_melee_target_together", bool(near_target),
+              {"qualified_phases": near_target, "distance_limit": 128,
+               "note": "Near a stationary god-mode enemy with both actual combat targets; no damage or kill claim."})
+        for ident in (6, 7):
+            observations = [bot(s, ident) for s in snapshots]
+            generations = {(b["fixture_spawn_generation"], b["fixture_placement_generation"]) for b in observations}
+            check("alien_"+str(ident)+"_same_life_without_reposition", len(generations) == 1 and
+                  all(not bot(s, ident)["paused"] for s in commits), sorted(generations))
     elif name == "accepted_taunts":
         before, accepted, repeated = [bot(by_phase[p], 0) for p in
                                      ("gesture_before", "gesture_accepted", "gesture_timer_blocks_repeat")]
@@ -362,6 +428,9 @@ def run_case(server, basepath, home, name, vm, fixture, timeout):
         errors.append("process_timeout_or_failure")
     if modes != [expected_mode]:
         errors.append("actual_module_mode_not_verified")
+    settings_evidence = bot_benchmark.bot_settings_evidence(PROFILE, text, require_all=True)
+    if not settings_evidence["verified"]:
+        errors.append("registered_fixture_profile_not_verified")
     if "rejected invalid or occupied" in text:
         errors.append("fixture_placement_rejected")
     if not snapshots:
@@ -381,6 +450,8 @@ def run_case(server, basepath, home, name, vm, fixture, timeout):
               "scope": "Offline cheat fixture with staged/paused/god actors; excluded from normal-rules balance and win-rate evidence.",
               "exit_code": process.returncode, "timed_out": timed_out,
               "wall_seconds": time.monotonic()-started, "errors": errors, "checks": checks,
+              "bot_settings_verification": settings_evidence,
+              "scenario_overrides": {"g_botTaunt": "0"} if name == "disabled_taunts" else {},
               "passed": not errors and bool(checks) and all(c["passed"] for c in checks),
               "records_sha256": sha(path) if path.exists() else None,
               "parsed_records_sha256": hashlib.sha256(json.dumps(records, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),

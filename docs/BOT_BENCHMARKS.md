@@ -137,8 +137,8 @@ With `teamwork_mode: dynamic_nearby`, the legacy `attack_waves`, `rallied_player
 `defensive_dispatches` fields describe cumulative local group formations, current
 regrouping actors and cumulative tactical withdrawals. `launched_members`
 counts membership changes, `peak_group` is the largest observed nearby
-component, `advance_orders` counts changed tactical orders, and `active_members`
-counts living attackers (the JSON key is `active_assault_members`).
+component, `advance_orders` counts changed tactical orders, and
+`active_assault_members` counts living attackers.
 `progress_renewals` and `timed_wave_recalls` remain zero:
 fixed wave lifetimes were removed. Historical checkpoints retain their original
 wave-based meanings. Use each actor's current `tactics` object to examine

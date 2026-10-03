@@ -73,13 +73,15 @@ typedef struct
   int safetyTime, safetyReason;
   vec3_t safetyPoint;
   vec3_t goal, lastOrigin, yieldDirection;
-  int wallPhase, wallClass, wallStarted, wallDeadline, wallNextTry, wallCandidate;
+  int wallPhase, wallStage, wallClass, wallStarted, wallDeadline, wallNextTry, wallCandidate;
   int wallMoveTime, wallApproaches, wallAttachments, wallCrawlOrders;
   int wallCompleted, wallAborted, wallObservedTime, wallReaims, wallReaimTime;
+  int retreatProgressTime;
   float wallTravel, wallPlanTravelStart;
   qboolean wallOrder, wallOrderClimb, wallOrderDetach, wallObservedAttached;
-  vec3_t wallEntry, wallCrawl, wallExit, wallNormal, wallGoal;
+  vec3_t wallEntry, wallRise, wallCrawl, wallExit, wallNormal, wallGoal;
   vec3_t wallDirection, wallObservedOrigin;
+  vec3_t retreatProgressPoint;
 } botNavClient_t;
 
 typedef struct
@@ -211,9 +213,10 @@ void G_BotNavDebugJSON( gentity_t *ent, char *out, int size )
     "\"step_fraction\":%.3f,\"body_fraction\":%.3f,\"body_startsolid\":%d,\"body_hit\":%d,"
     "\"route_group\":%d,\"route_variant\":%d,\"route_epoch\":%d,\"crowd_yields\":%d,"
     "\"movement_fraction\":%.3f,\"movement_blocker\":%d,\"movement_age_ms\":%d,\"movement_reason\":%d,"
-    "\"wall_phase\":%d,\"wall_plan_age_ms\":%d,\"wall_approaches\":%d,\"wall_attachments\":%d,"
+    "\"local_retreat_age_ms\":%d,\"local_retreat_point\":[%.1f,%.1f,%.1f],"
+    "\"wall_phase\":%d,\"wall_stage\":%d,\"wall_plan_age_ms\":%d,\"wall_approaches\":%d,\"wall_attachments\":%d,"
     "\"wall_crawl_orders\":%d,\"wall_completed\":%d,\"wall_aborted\":%d,\"wall_reaims\":%d,\"wall_travel_units\":%.1f,"
-    "\"wall_entry\":[%.1f,%.1f,%.1f],\"wall_crawl\":[%.1f,%.1f,%.1f],\"wall_exit\":[%.1f,%.1f,%.1f]}",
+    "\"wall_entry\":[%.1f,%.1f,%.1f],\"wall_rise\":[%.1f,%.1f,%.1f],\"wall_crawl\":[%.1f,%.1f,%.1f],\"wall_exit\":[%.1f,%.1f,%.1f]}",
     client->cursor, client->length, client->partial, client->planFrom, client->planTo, node,
     waypoint[ 0 ], waypoint[ 1 ], waypoint[ 2 ], client->avoidNode,
     MAX( 0, client->avoidUntil - level.time ),
@@ -224,10 +227,13 @@ void G_BotNavDebugJSON( gentity_t *ent, char *out, int size )
     client->routeGroup, client->routeVariant, client->routeEpoch, client->crowdYields,
     client->movementFraction, client->movementBlocker,
     client->movementTime ? level.time - client->movementTime : -1, client->movementReason,
-    client->wallPhase, client->wallPhase ? level.time - client->wallStarted : -1,
+    client->retreatProgressTime ? level.time - client->retreatProgressTime : -1,
+    client->retreatProgressPoint[ 0 ], client->retreatProgressPoint[ 1 ], client->retreatProgressPoint[ 2 ],
+    client->wallPhase, client->wallStage, client->wallPhase ? level.time - client->wallStarted : -1,
     client->wallApproaches, client->wallAttachments, client->wallCrawlOrders,
     client->wallCompleted, client->wallAborted, client->wallReaims, client->wallTravel,
     client->wallEntry[ 0 ], client->wallEntry[ 1 ], client->wallEntry[ 2 ],
+    client->wallRise[ 0 ], client->wallRise[ 1 ], client->wallRise[ 2 ],
     client->wallCrawl[ 0 ], client->wallCrawl[ 1 ], client->wallCrawl[ 2 ],
     client->wallExit[ 0 ], client->wallExit[ 1 ], client->wallExit[ 2 ] );
 }
@@ -2071,13 +2077,32 @@ static qboolean BotNavWallSupportedApproach( gentity_t *ent )
   return qfalse;
 }
 
+static qboolean BotNavWallLeg( gentity_t *ent, const vec3_t from, const vec3_t to,
+                               const vec3_t normal )
+{
+  vec3_t start, end, delta, sample;
+  trace_t tr;
+  int i, steps;
+  VectorMA( from, 1.0f, normal, start ); VectorMA( to, 1.0f, normal, end );
+  BotNavWallTrace( &tr, ent, start, ent->r.mins, ent->r.maxs, end, qtrue );
+  if( !BotNavClassClear( &tr ) ) return qfalse;
+  VectorSubtract( to, from, delta );
+  steps = (int)( VectorLength( delta ) / 32.0f ) + 1;
+  for( i = 1; i <= steps; i++ )
+  {
+    VectorMA( from, (float)i / steps, delta, sample );
+    if( !BotNavWallTouch( ent, sample, normal, qtrue ) ) return qfalse;
+  }
+  return qtrue;
+}
+
 static qboolean BotNavWallPlan( gentity_t *ent, botState_t *bot, botNavClient_t *client,
                                 const vec3_t goal, qboolean attached, const vec3_t normal )
 {
-  vec3_t toward, side, probe, entry, crawl, along, wallNormal, sample, landing, delta;
+  vec3_t toward, side, probe, entry, rise, crawl, along, wallNormal, sample, landing;
   trace_t tr;
   float distance, sign, progress, fraction;
-  int candidate, steps, i, before;
+  int candidate, before;
   if( navWallPlanTraces > BOT_NAV_WALL_PLAN_TRACES - 48 ) return qfalse;
   VectorSubtract( goal, ent->client->ps.origin, toward ); toward[ 2 ] = 0.0f;
   if( VectorNormalize( toward ) < 0.01f ||
@@ -2118,27 +2143,23 @@ static qboolean BotNavWallPlan( gentity_t *ent, botState_t *bot, botNavClient_t 
   if( VectorNormalize( along ) < 0.3f ) return qfalse;
   progress = DotProduct( along, toward );
   if( progress < 0.35f ) return qfalse;
-  VectorMA( entry, 128.0f + ( candidate & 1 ) * 32.0f, along, crawl );
-  crawl[ 2 ] += attached ? 32.0f : 64.0f;
-  VectorMA( entry, 1.0f, wallNormal, sample );
-  VectorMA( crawl, 1.0f, wallNormal, probe );
-  BotNavWallTrace( &tr, ent, sample, ent->r.mins, ent->r.maxs, probe, qtrue );
-  if( !BotNavClassClear( &tr ) ) return qfalse;
-  VectorSubtract( crawl, entry, delta ); distance = VectorLength( delta );
-  steps = (int)( distance / 32.0f ) + 1;
-  for( i = 1; i <= steps; i++ )
-  {
-    VectorMA( entry, (float)i / steps, delta, sample );
-    if( !BotNavWallTouch( ent, sample, wallNormal, qtrue ) ) return qfalse;
-  }
+  /* Rise before advancing past an obstacle. A single diagonal chord can hit
+   * its side even when both ordinary wall tangents are clear. Prove both legs
+   * independently with the full body, continuous wall support and hazards. */
+  VectorCopy( entry, rise ); rise[ 2 ] += attached ? 32.0f : 64.0f;
+  VectorMA( rise, 128.0f + ( candidate & 1 ) * 32.0f, along, crawl );
+  if( !BotNavWallLeg( ent, entry, rise, wallNormal ) ||
+      !BotNavWallLeg( ent, rise, crawl, wallNormal ) ) return qfalse;
   if( !BotNavWallLanding( ent, crawl, wallNormal, landing, qtrue ) ) return qfalse;
   client->wallPhase = attached ? 2 : 1;
+  client->wallStage = 0;
   client->wallClass = ent->client->ps.stats[ STAT_CLASS ];
   client->wallStarted = level.time; client->wallDeadline = level.time + 6000;
   client->wallApproaches++;
   client->wallPlanTravelStart = client->wallTravel;
   if( attached ) client->wallAttachments++;
-  VectorCopy( entry, client->wallEntry ); VectorCopy( crawl, client->wallCrawl );
+  VectorCopy( entry, client->wallEntry ); VectorCopy( rise, client->wallRise );
+  VectorCopy( crawl, client->wallCrawl );
   VectorCopy( landing, client->wallExit ); VectorCopy( wallNormal, client->wallNormal );
   VectorCopy( goal, client->wallGoal );
   VectorCopy( ent->client->ps.origin, client->wallObservedOrigin );
@@ -2227,7 +2248,11 @@ qboolean G_BotNavWallMove( gentity_t *ent, botState_t *bot, const vec3_t goal,
     }
     else if( client->wallPhase == 2 )
     {
-      VectorSubtract( client->wallCrawl, ent->client->ps.origin, direction );
+      if( !client->wallStage && ent->client->ps.origin[ 2 ] >= client->wallRise[ 2 ] - 2.0f )
+        client->wallStage = 1;
+      if( client->wallStage )
+        VectorSubtract( client->wallCrawl, ent->client->ps.origin, direction );
+      else VectorSubtract( client->wallRise, ent->client->ps.origin, direction );
       ProjectPointOnPlane( direction, direction, normal );
       if( VectorNormalize( direction ) < 0.01f ||
           BotNavSurfaceClearance( ent, direction, normal, &tr ) < 0.95f )
@@ -2319,6 +2344,44 @@ qboolean G_BotNavWallMove( gentity_t *ent, botState_t *bot, const vec3_t goal,
            ( !( ent->client->ps.persistant[ PERS_STATE ] & PS_WALLCLIMBINGTOGGLE ) ||
              !( ent->client->ps.stats[ STAT_STATE ] & SS_WALLCLIMBING ) ) ) cmd->upmove = -127;
   return qtrue;
+}
+
+/* A distant reinforcement can lack a finished graph route or occupy its own
+ * endpoint. With actual fresh numerical disadvantage, take only a short
+ * freshly supported step that moves away from the recorded seen threat. This
+ * does not mark any graph route or the remaining regroup distance as legal. */
+static qboolean BotNavRetreatProgress( gentity_t *ent, botState_t *bot,
+                                       const vec3_t goal, vec3_t point )
+{
+  vec3_t threat, toward, away, direction, end, normal;
+  trace_t tr;
+  qboolean retreat;
+  int allies, enemies, i;
+  float dangerDistance;
+  if( !bot->rallying || ent->client->ps.groundEntityNum != ENTITYNUM_WORLD ||
+      !G_BotTeamCombatContext( ent, threat, &allies, &enemies, &retreat ) || !retreat ) return qfalse;
+  BG_GetClientNormal( &ent->client->ps, normal );
+  if( normal[ 2 ] < 0.7f ) return qfalse;
+  dangerDistance = Distance( ent->client->ps.origin, threat );
+  VectorSubtract( goal, ent->client->ps.origin, toward ); toward[ 2 ] = 0.0f;
+  VectorNormalize( toward );
+  VectorSubtract( ent->client->ps.origin, threat, away ); away[ 2 ] = 0.0f;
+  if( VectorNormalize( away ) < 0.01f ) return qfalse;
+  for( i = 0; i < 2; i++ )
+  {
+    if( i ) VectorCopy( away, direction );
+    else VectorCopy( toward, direction );
+    if( VectorLengthSquared( direction ) < 0.01f ) continue;
+    VectorMA( ent->client->ps.origin, 48.0f, direction, end );
+    if( Distance( end, threat ) < dangerDistance + 8.0f ) continue;
+    if( BotNavStepClearance( ent, direction, 48.0f, MASK_PLAYERSOLID, end, &tr ) < 0.95f ||
+        Distance( end, threat ) < dangerDistance + 8.0f ) continue;
+    VectorCopy( end, point );
+    navClients[ ent->s.number ].retreatProgressTime = level.time;
+    VectorCopy( end, navClients[ ent->s.number ].retreatProgressPoint );
+    return qtrue;
+  }
+  return qfalse;
 }
 
 void G_BotNavMove( gentity_t *ent, botState_t *bot, const vec3_t goal,
@@ -2444,6 +2507,9 @@ void G_BotNavMove( gentity_t *ent, botState_t *bot, const vec3_t goal,
      * the raw distant goal as if a human-only route had been proven. */
     VectorCopy( ent->client->ps.origin, waypoint );
   }
+
+  if( navTuning.integer && !climbing && DistanceSquared( waypoint, ent->client->ps.origin ) < 1.0f )
+    BotNavRetreatProgress( ent, bot, goal, waypoint );
 
   offSurfaceGoal = navTuning.integer && climbing &&
     ( DistanceSquared( waypoint, ent->client->ps.origin ) > 48.0f * 48.0f ||
