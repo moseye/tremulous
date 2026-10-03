@@ -846,6 +846,10 @@ void ClientEvents( gentity_t *ent, int oldEventSequence )
 
     switch( event )
     {
+      case EV_TAUNT:
+        G_BotTauntEvent( ent );
+        break;
+
       case EV_FALL_MEDIUM:
       case EV_FALL_FAR:
         if( ent->s.eType != ET_PLAYER )

@@ -1,50 +1,70 @@
-/* Shared bot objectives and reinforcement waves. GPL-2.0-or-later; see GPL.
- * Orders only select normal movement goals and visible-target priorities. */
+/* Shared objectives and local cooperation. GPL-2.0-or-later; see GPL.
+ * Groups describe current neighbors, never a fixed roster or home launch gate.
+ * All movement orders still use normal collision-safe navigation. */
 #include "g_local.h"
 #include "g_bot.h"
 
-#define BOT_TEAM_MAX_WAVES 8
-#define BOT_TEAM_MAX_GROUP 6
-#define BOT_TEAM_GATHER_TIME 25000
+#define BOT_TEAM_PLAN_TIME 500
+#define BOT_TEAM_FRESH_TIME 1500
 #define BOT_TEAM_CONTACT_TIME 20000
 #define BOT_TEAM_SEARCH_TIME 20000
+#define BOT_TEAM_GROUP_RANGE 450.0f
+#define BOT_TEAM_ALLY_RANGE 600.0f
+#define BOT_TEAM_SIGHT_RANGE 850.0f
+
+enum { BOT_ORDER_NONE, BOT_ORDER_ATTACK, BOT_ORDER_FIGHT, BOT_ORDER_REGROUP,
+       BOT_ORDER_DEFEND, BOT_ORDER_SEARCH };
+enum { BOT_REGROUP_NONE, BOT_REGROUP_RETREAT, BOT_REGROUP_JOIN };
 
 typedef struct
 {
-  int serial, until, leader, members, nearLeader, holdSince;
-  int progressLeader, progressObjective, lastProgress;
-  float bestDistance;
-  vec3_t progressPoint;
-} botAttackWave_t;
+  int enterTime, spawn, role, classNum;
+  int group, groupSize, representative;
+  int allies, enemies, ownEnemies, senseTime, combatTime, combatTarget;
+  int regroupReason, regroupTarget, regroupUntil, regroupSince, regroupCooldown;
+  int orderKind, orderTarget, searchUntil, searchSpawn, searchClass;
+  qboolean outnumbered, hasSafePoint;
+  vec3_t center, combatPoint, regroupPoint, safePoint, searchPoint;
+} botTeamActor_t;
 
 typedef struct
 {
   int nextPlan, home, objective, focus, threat, hunt, threats;
-  int waves, rallied, dispatches, waitingSince, serial;
-  int launchedMembers, peakGroup, advanceOrders, activeMembers, basePressure;
-  int progressRenewals, timedRecalls;
-  qboolean hasRally, hasApproach, hasEnemyBase;
-  vec3_t homePoint, rally, objectivePoint, focusPoint, threatPoint, huntPoint, approach;
-  qboolean defending[ MAX_CLIENTS ], escorting[ MAX_CLIENTS ];
-  int releasedSpawn[ MAX_CLIENTS ], enterTime[ MAX_CLIENTS ], wave[ MAX_CLIENTS ];
-  int memberRole[ MAX_CLIENTS ], memberClass[ MAX_CLIENTS ], memberSpawn[ MAX_CLIENTS ];
-  int orderKind[ MAX_CLIENTS ], orderTarget[ MAX_CLIENTS ];
+  /* Retained metric ABI: local formations, current regrouping, withdrawals,
+   * membership changes. These no longer describe fixed attack waves. */
+  int formations, regrouping, withdrawals, membershipChanges, peakGroup;
+  int advanceOrders, activeMembers, basePressure;
+  qboolean hasEnemyBase;
+  vec3_t homePoint, objectivePoint, focusPoint, threatPoint, huntPoint;
   int contactTime[ MAX_CLIENTS ];
   vec3_t contactPoint[ MAX_CLIENTS ];
-  int searchUntil[ MAX_CLIENTS ], searchSpawn[ MAX_CLIENTS ], searchClass[ MAX_CLIENTS ];
-  vec3_t searchPoint[ MAX_CLIENTS ];
-  botAttackWave_t attackWaves[ BOT_TEAM_MAX_WAVES ];
+  qboolean seen[ MAX_CLIENTS ][ MAX_CLIENTS ];
+  qboolean allySight[ MAX_CLIENTS ][ MAX_CLIENTS ];
+  botTeamActor_t actors[ MAX_CLIENTS ];
 } botTeamPlan_t;
 
 vmCvar_t g_botTeamwork;
 static botTeamPlan_t botTeams[ NUM_TEAMS ];
 
+static qboolean BotTeamClientAlive( gentity_t *ent, team_t team )
+{
+  return ent->inuse && ent->client && ent->health > 0 &&
+    ent->client->pers.connected == CON_CONNECTED &&
+    ent->client->pers.teamSelection == team &&
+    ent->client->sess.spectatorState == SPECTATOR_NOT;
+}
+
 static qboolean BotTeamAlive( gentity_t *ent, team_t team )
 {
-  return ent->inuse && ent->client && G_BotIsBot( ent->s.number ) &&
-    ent->client->pers.connected == CON_CONNECTED &&
-    ent->client->pers.teamSelection == team && ent->health > 0 &&
-    ent->client->sess.spectatorState == SPECTATOR_NOT;
+  return BotTeamClientAlive( ent, team ) && G_BotIsBot( ent->s.number );
+}
+
+static qboolean BotTeamCombatant( gentity_t *ent, team_t team )
+{
+  if( !BotTeamClientAlive( ent, team ) ) return qfalse;
+  if( G_BotIsBot( ent->s.number ) && g_botStates[ ent->s.number ].role == BOT_BUILD ) return qfalse;
+  return ent->client->ps.weapon != WP_HBUILD && ent->client->ps.weapon != WP_ABUILD &&
+         ent->client->ps.weapon != WP_ABUILD2;
 }
 
 static qboolean BotTeamEnemy( gentity_t *ent, team_t team )
@@ -57,13 +77,6 @@ static qboolean BotTeamEnemy( gentity_t *ent, team_t team )
   return ent->s.eType == ET_BUILDABLE && ent->buildableTeam != TEAM_NONE && ent->buildableTeam != team;
 }
 
-static qboolean BotTeamLineClear( const vec3_t from, const vec3_t to )
-{
-  trace_t tr;
-  trap_Trace( &tr, from, NULL, NULL, to, ENTITYNUM_NONE, MASK_SOLID );
-  return !tr.startsolid && tr.fraction == 1.0f;
-}
-
 static qboolean BotTeamSight( gentity_t *ent, gentity_t *target )
 {
   vec3_t eye, point;
@@ -73,15 +86,22 @@ static qboolean BotTeamSight( gentity_t *ent, gentity_t *target )
   for( i = 0; i < 3; i++ )
     point[ i ] = target->r.currentOrigin[ i ] + ( target->r.mins[ i ] + target->r.maxs[ i ] ) * 0.5f;
   trap_Trace( &tr, eye, NULL, NULL, point, ent->s.number, MASK_SHOT );
-  return tr.fraction == 1.0f || tr.entityNum == target->s.number;
+  return !tr.startsolid && ( tr.fraction == 1.0f || tr.entityNum == target->s.number );
 }
 
-static qboolean BotTeamNearRally( gentity_t *ent, botTeamPlan_t *plan )
+static qboolean BotTeamLineClear( const vec3_t from, const vec3_t to )
 {
-  vec3_t eye;
-  if( !plan->hasRally || DistanceSquared( ent->r.currentOrigin, plan->rally ) > 280.0f * 280.0f ) return qfalse;
-  VectorCopy( plan->rally, eye ); eye[ 2 ] += 24.0f;
-  return BotTeamLineClear( eye, ent->r.currentOrigin );
+  trace_t tr;
+  trap_Trace( &tr, from, NULL, NULL, to, ENTITYNUM_NONE, MASK_SOLID );
+  return !tr.startsolid && tr.fraction == 1.0f;
+}
+
+static qboolean BotTeamAllySight( gentity_t *a, gentity_t *b )
+{
+  vec3_t from, to;
+  BG_GetClientViewOrigin( &a->client->ps, from );
+  BG_GetClientViewOrigin( &b->client->ps, to );
+  return BotTeamLineClear( from, to );
 }
 
 static float BotTeamBuildingPriority( gentity_t *ent )
@@ -107,13 +127,11 @@ static qboolean BotTeamSearching( gentity_t *ent, botTeamPlan_t *plan )
     ( plan->objective < 0 || !BotTeamStructureAttack( ent, &g_entities[ plan->objective ] ) ) );
 }
 
-static botAttackWave_t *BotTeamWave( botTeamPlan_t *plan, int clientNum )
+static void BotTeamClearActor( botTeamActor_t *actor )
 {
-  int i;
-  for( i = 0; i < BOT_TEAM_MAX_WAVES; i++ )
-    if( plan->attackWaves[ i ].serial && plan->attackWaves[ i ].serial == plan->wave[ clientNum ] &&
-        plan->attackWaves[ i ].until > level.time ) return &plan->attackWaves[ i ];
-  return NULL;
+  memset( actor, 0, sizeof( *actor ) );
+  actor->spawn = actor->role = actor->classNum = -1;
+  actor->representative = actor->combatTarget = actor->regroupTarget = -1;
 }
 
 void G_BotTeamInit( void )
@@ -125,269 +143,18 @@ void G_BotTeamInit( void )
   {
     botTeams[ team ].home = botTeams[ team ].objective = -1;
     botTeams[ team ].focus = botTeams[ team ].threat = botTeams[ team ].hunt = -1;
-    for( i = 0; i < MAX_CLIENTS; i++ )
-    {
-      botTeams[ team ].releasedSpawn[ i ] = -1;
-      botTeams[ team ].memberRole[ i ] = botTeams[ team ].memberClass[ i ] =
-        botTeams[ team ].memberSpawn[ i ] = -1;
-    }
+    for( i = 0; i < MAX_CLIENTS; i++ ) BotTeamClearActor( &botTeams[ team ].actors[ i ] );
   }
 }
 
-/* Player contacts are allies' recent combat targets, originally chosen with
- * sight traces. Unseen enemy player positions are never searched. */
-static void BotTeamContacts( team_t team, botTeamPlan_t *plan )
+/* Static infrastructure supplies map objectives; only actual player sight
+ * reports produce combat contacts. */
+static void BotTeamObjectives( team_t team, botTeamPlan_t *plan )
 {
-  int i, j, target, reports[ MAX_GENTITIES ];
-  float score, bestFocus = -1e30f, bestThreat = -1e30f, bestHunt = -1e30f;
-  gentity_t *enemy;
-  memset( reports, 0, sizeof( reports ) );
-  plan->focus = plan->threat = plan->hunt = -1; plan->threats = 0;
-  for( i = 0; i < level.maxclients; i++ )
-  {
-    if( !BotTeamAlive( &g_entities[ i ], team ) ) continue;
-    target = g_botStates[ i ].target;
-    if( target < 0 || target >= level.num_entities || g_botStates[ i ].nextEnemyScan < level.time - 500 ) continue;
-    if( BotTeamEnemy( &g_entities[ target ], team ) &&
-        BotTeamSight( &g_entities[ i ], &g_entities[ target ] ) ) reports[ target ]++;
-  }
-  for( i = 0; i < level.num_entities; i++ )
-  {
-    if( !reports[ i ] ) continue;
-    enemy = &g_entities[ i ];
-    score = reports[ i ] * 180.0f + ( enemy->client ? 400.0f : BotTeamBuildingPriority( enemy ) * 0.2f );
-    score -= enemy->health * 0.2f;
-    if( score > bestFocus )
-    { bestFocus = score; plan->focus = i; VectorCopy( enemy->r.currentOrigin, plan->focusPoint ); }
-    if( enemy->client && i < level.maxclients )
-    {
-      /* Refresh only an ally's current sight report. Remembered contacts never
-       * read a hidden player's new position or extend their own expiry. */
-      plan->contactTime[ i ] = level.time;
-      VectorCopy( enemy->r.currentOrigin, plan->contactPoint[ i ] );
-      score = 1500.0f - Distance( plan->homePoint, enemy->r.currentOrigin );
-      if( score > 600.0f )
-      {
-        plan->threats++;
-        if( score > bestThreat )
-        { bestThreat = score; plan->threat = i; VectorCopy( enemy->r.currentOrigin, plan->threatPoint ); }
-      }
-      score = reports[ i ] * 100.0f - Distance( plan->objectivePoint, enemy->r.currentOrigin ) * 0.1f;
-      if( score > bestHunt )
-      { bestHunt = score; plan->hunt = i; VectorCopy( enemy->r.currentOrigin, plan->huntPoint ); }
-    }
-  }
-  if( plan->hunt >= 0 ) return;
-  for( i = 0; i < level.maxclients; i++ )
-  {
-    if( !plan->contactTime[ i ] || level.time - plan->contactTime[ i ] > BOT_TEAM_CONTACT_TIME ) continue;
-    /* Once an ally reaches and sees the remembered location without a fresh
-     * contact, searching that empty position again cannot help find survivors. */
-    for( j = 0; j < level.maxclients; j++ )
-      if( BotTeamAlive( &g_entities[ j ], team ) &&
-          DistanceSquared( g_entities[ j ].r.currentOrigin, plan->contactPoint[ i ] ) < 128.0f * 128.0f &&
-          BotTeamLineClear( g_entities[ j ].r.currentOrigin, plan->contactPoint[ i ] ) ) break;
-    if( j < level.maxclients ) { plan->contactTime[ i ] = 0; continue; }
-    score = -( level.time - plan->contactTime[ i ] ) * 0.05f -
-            Distance( plan->objectivePoint, plan->contactPoint[ i ] ) * 0.1f;
-    if( score > bestHunt )
-    { bestHunt = score; plan->hunt = i; VectorCopy( plan->contactPoint[ i ], plan->huntPoint ); }
-  }
-}
-
-static void BotTeamUpdateWaves( team_t team, botTeamPlan_t *plan )
-{
-  int i, w, leader;
-  float score, best, distance;
-  qboolean progressing;
-  botAttackWave_t *wave;
-  plan->activeMembers = plan->basePressure = 0;
-  for( w = 0; w < BOT_TEAM_MAX_WAVES; w++ )
-  {
-    wave = &plan->attackWaves[ w ];
-    if( !wave->serial ) continue;
-    wave->members = wave->nearLeader = 0; leader = -1; best = -1e30f;
-    for( i = 0; i < level.maxclients; i++ )
-    {
-      if( plan->wave[ i ] != wave->serial || plan->releasedSpawn[ i ] != g_botStates[ i ].spawnCount ||
-          !BotTeamAlive( &g_entities[ i ], team ) || g_botStates[ i ].role != BOT_ATTACK || plan->defending[ i ] ) continue;
-      wave->members++;
-      score = g_entities[ i ].health + g_entities[ i ].client->ps.stats[ STAT_MAX_HEALTH ] * 0.5f;
-      if( i == wave->leader ) score += 60.0f;
-      if( g_entities[ i ].health < g_entities[ i ].client->ps.stats[ STAT_MAX_HEALTH ] * 0.4f ) score -= 1000.0f;
-      if( score > best ) { leader = i; best = score; }
-    }
-    wave->leader = leader;
-    progressing = qfalse;
-    if( leader >= 0 && plan->hasEnemyBase && plan->objective >= 0 )
-    {
-      distance = Distance( g_entities[ leader ].r.currentOrigin, plan->objectivePoint );
-      /* Retain a travelling assault only after its same leader makes real
-       * progress toward the same known objective. Switching leader/target
-       * cannot manufacture progress; backing up and returning cannot refresh
-       * the deadline until the wave passes its previous best distance. */
-      if( wave->progressLeader != leader || wave->progressObjective != plan->objective ||
-          DistanceSquared( wave->progressPoint, plan->objectivePoint ) > 96.0f * 96.0f )
-      {
-        wave->progressLeader = leader; wave->progressObjective = plan->objective;
-        VectorCopy( plan->objectivePoint, wave->progressPoint );
-        wave->bestDistance = distance; wave->lastProgress = 0;
-      }
-      else if( distance + 96.0f < wave->bestDistance )
-      { wave->bestDistance = distance; wave->lastProgress = level.time; }
-      progressing = wave->lastProgress > 0 && level.time - wave->lastProgress <= 25000 &&
-        g_entities[ leader ].health >= g_entities[ leader ].client->ps.stats[ STAT_MAX_HEALTH ] * 0.4f &&
-        BotTeamStructureAttack( &g_entities[ leader ], &g_entities[ plan->objective ] );
-    }
-    /* Keep a surviving group on its siege rather than recalling it simply
-     * because its travel timer elapsed while the objective was under attack. */
-    if( wave->until <= level.time && leader >= 0 && plan->hasEnemyBase &&
-        ( progressing || ( wave->members >= 3 &&
-          DistanceSquared( g_entities[ leader ].r.currentOrigin, plan->objectivePoint ) < 900.0f * 900.0f ) ) )
-    {
-      wave->until = level.time + 15000;
-      if( progressing ) plan->progressRenewals++;
-    }
-    if( wave->until <= level.time || !wave->members )
-    {
-      if( wave->members && wave->until <= level.time ) plan->timedRecalls++;
-      wave->serial = 0; continue;
-    }
-    for( i = 0; i < level.maxclients; i++ )
-    {
-      if( plan->wave[ i ] != wave->serial || plan->releasedSpawn[ i ] != g_botStates[ i ].spawnCount ||
-          !BotTeamAlive( &g_entities[ i ], team ) || g_botStates[ i ].role != BOT_ATTACK || plan->defending[ i ] ) continue;
-      plan->activeMembers++;
-      if( DistanceSquared( g_entities[ i ].r.currentOrigin, g_entities[ leader ].r.currentOrigin ) < 550.0f * 550.0f &&
-          BotTeamLineClear( g_entities[ leader ].r.currentOrigin, g_entities[ i ].r.currentOrigin ) ) wave->nearLeader++;
-      if( plan->hasEnemyBase && DistanceSquared( g_entities[ i ].r.currentOrigin, plan->objectivePoint ) < 900.0f * 900.0f )
-        plan->basePressure++;
-    }
-    if( wave->nearLeader < MIN( 3, wave->members ) )
-    { if( !wave->holdSince ) wave->holdSince = level.time; }
-    else wave->holdSince = 0;
-  }
-}
-
-static qboolean BotTeamWaiting( gentity_t *ent, team_t team, botTeamPlan_t *plan )
-{
-  int id = ent->s.number;
-  return BotTeamAlive( ent, team ) && g_botStates[ id ].role == BOT_ATTACK &&
-    !plan->defending[ id ] &&
-    !( plan->releasedSpawn[ id ] == g_botStates[ id ].spawnCount && BotTeamWave( plan, id ) );
-}
-
-/* A fixed gathering point must not hold a surviving force forever. Choose one
- * physical waiting cluster, without reading enemies or inventing route proof.
- * Score nearby candidates cheaply, then trace only the chosen cluster's LOS. */
-static int BotTeamWaitingPool( team_t team, botTeamPlan_t *plan, int *ready )
-{
-  int i, j, nearby, bestCount = 0, seed = -1, count = 0;
-  float durability, bestDurability = -1.0f;
+  int i, previous = plan->objective;
+  float score, best = -1e30f;
   gentity_t *ent;
-  for( i = 0; i < level.maxclients; i++ )
-  {
-    ent = &g_entities[ i ];
-    if( !BotTeamWaiting( ent, team, plan ) ||
-        ent->health < ent->client->ps.stats[ STAT_MAX_HEALTH ] * 0.4f ) continue;
-    nearby = 0;
-    for( j = 0; j < level.maxclients; j++ )
-      if( BotTeamWaiting( &g_entities[ j ], team, plan ) &&
-          g_entities[ j ].health >= g_entities[ j ].client->ps.stats[ STAT_MAX_HEALTH ] * 0.4f &&
-          fabs( ent->r.currentOrigin[ 2 ] - g_entities[ j ].r.currentOrigin[ 2 ] ) <= 64.0f &&
-          DistanceSquared( ent->r.currentOrigin, g_entities[ j ].r.currentOrigin ) <= 280.0f * 280.0f ) nearby++;
-    durability = ent->health + ent->client->ps.stats[ STAT_MAX_HEALTH ] * 0.5f;
-    if( nearby > bestCount || ( nearby == bestCount && durability > bestDurability ) )
-    { bestCount = nearby; bestDurability = durability; seed = i; }
-  }
-  if( seed < 0 ) return 0;
-  for( i = 0; i < level.maxclients; i++ )
-  {
-    ent = &g_entities[ i ];
-    if( !BotTeamWaiting( ent, team, plan ) ||
-        ent->health < ent->client->ps.stats[ STAT_MAX_HEALTH ] * 0.4f ||
-        fabs( ent->r.currentOrigin[ 2 ] - g_entities[ seed ].r.currentOrigin[ 2 ] ) > 64.0f ||
-        DistanceSquared( ent->r.currentOrigin, g_entities[ seed ].r.currentOrigin ) > 280.0f * 280.0f ||
-        ( i != seed && !BotTeamLineClear( ent->r.currentOrigin, g_entities[ seed ].r.currentOrigin ) ) ) continue;
-    ready[ count++ ] = i;
-  }
-  return count;
-}
-
-static void BotTeamLaunch( team_t team, botTeamPlan_t *plan, int needed )
-{
-  int i, slot = -1, count = 0, ready[ MAX_CLIENTS ], candidate, totalReady = 0, waiting = 0, spawns = 0;
-  float score, best;
-  qboolean fallback = qfalse;
-  botAttackWave_t *wave;
-  for( i = MAX_CLIENTS; i < level.num_entities; i++ )
-    if( g_entities[ i ].inuse && g_entities[ i ].health > 0 && g_entities[ i ].buildableTeam == team &&
-        ( g_entities[ i ].s.modelindex == BA_H_SPAWN || g_entities[ i ].s.modelindex == BA_A_SPAWN ) ) spawns++;
-  plan->rallied = 0;
-  for( i = 0; i < level.maxclients; i++ )
-  {
-    if( !BotTeamAlive( &g_entities[ i ], team ) || g_botStates[ i ].role != BOT_ATTACK || plan->defending[ i ] ) continue;
-    if( plan->releasedSpawn[ i ] == g_botStates[ i ].spawnCount && BotTeamWave( plan, i ) ) continue;
-    waiting++;
-    if( BotTeamNearRally( &g_entities[ i ], plan ) ) ready[ totalReady++ ] = i;
-  }
-  plan->rallied = totalReady;
-  if( !waiting ) { plan->waitingSince = 0; return; }
-  if( !plan->waitingSince ) plan->waitingSince = level.time;
-  if( totalReady < needed && level.time - plan->waitingSince >= 30000 )
-  {
-    totalReady = BotTeamWaitingPool( team, plan, ready );
-    fallback = totalReady >= 2 ||
-      ( totalReady >= 1 && level.time - plan->waitingSince >= 60000 );
-    if( !fallback ) return;
-  }
-  /* Pool across client IDs. A short fixed-slot timeout was calling individual
-   * respawns waves even when the other attackers were still queued. */
-  if( !fallback && totalReady < needed && !( totalReady >= 2 && level.time - plan->waitingSince >= BOT_TEAM_GATHER_TIME ) &&
-      !( !spawns && totalReady >= 1 ) ) return;
-  if( level.time - plan->waitingSince < 1000 ) return;
-  for( i = 0; i < BOT_TEAM_MAX_WAVES; i++ )
-    if( !plan->attackWaves[ i ].serial || plan->attackWaves[ i ].until <= level.time )
-    { slot = i; break; }
-  if( slot < 0 ) return;
-  wave = &plan->attackWaves[ slot ]; memset( wave, 0, sizeof( *wave ) );
-  wave->serial = ++plan->serial; wave->until = level.time + 90000; wave->leader = -1;
-  wave->progressLeader = wave->progressObjective = -1;
-  /* Put durable/evolved attackers in the same launch as their escorts. */
-  while( count < BOT_TEAM_MAX_GROUP && count < totalReady )
-  {
-    candidate = -1; best = -1e30f;
-    for( i = 0; i < totalReady; i++ )
-    {
-      if( ready[ i ] < 0 ) continue;
-      score = g_entities[ ready[ i ] ].health + g_entities[ ready[ i ] ].client->ps.stats[ STAT_MAX_HEALTH ] * 0.5f;
-      if( score > best ) { best = score; candidate = i; }
-    }
-    if( candidate < 0 ) break;
-    i = ready[ candidate ]; ready[ candidate ] = -1;
-    plan->releasedSpawn[ i ] = g_botStates[ i ].spawnCount; plan->wave[ i ] = wave->serial;
-    plan->escorting[ i ] = qfalse; plan->orderKind[ i ] = 0;
-    if( BotTeamNearRally( &g_entities[ i ], plan ) && plan->rallied > 0 ) plan->rallied--;
-    if( wave->leader < 0 ) wave->leader = i;
-    count++;
-  }
-  wave->members = wave->nearLeader = count;
-  plan->waves++; plan->launchedMembers += count;
-  if( count > plan->peakGroup ) plan->peakGroup = count;
-  plan->waitingSince = 0;
-}
-
-static void BotTeamPlan( team_t team, botTeamPlan_t *plan )
-{
-  int i, previousHome = plan->home, previousObjective = plan->objective;
-  int roles = 0, attackers = 0, wanted, nearest, count, needed;
-  class_t routeClass = team == TEAM_HUMANS ? PCL_HUMAN_BSUIT : PCL_ALIEN_LEVEL4;
-  qboolean wasDefending[ MAX_CLIENTS ], critical;
-  float score, best, distance;
-  gentity_t *ent;
-  plan->home = plan->objective = -1;
-  plan->hasEnemyBase = qfalse;
-  best = -1e30f;
+  plan->home = plan->objective = -1; plan->hasEnemyBase = qfalse;
   for( i = MAX_CLIENTS; i < level.num_entities; i++ )
   {
     ent = &g_entities[ i ];
@@ -403,73 +170,287 @@ static void BotTeamPlan( team_t team, botTeamPlan_t *plan )
     ent = &g_entities[ i ];
     if( ent->s.eType != ET_BUILDABLE || !BotTeamEnemy( ent, team ) ) continue;
     score = BotTeamBuildingPriority( ent ) - Distance( plan->homePoint, ent->r.currentOrigin ) * 0.15f;
-    if( i == previousObjective ) score += 250.0f;
+    if( i == previous ) score += 250.0f;
     if( score > best )
     { best = score; plan->objective = i; plan->hasEnemyBase = qtrue; VectorCopy( ent->r.currentOrigin, plan->objectivePoint ); }
   }
   if( !plan->hasEnemyBase ) VectorCopy( plan->homePoint, plan->objectivePoint );
-  /* New graph nodes must not move the gathering point underneath a group.
-   * Retry an unavailable point as the graph grows, then retain it until the
-   * base or attack objective changes. */
-  if( plan->home < 0 || !plan->hasEnemyBase ) plan->hasRally = qfalse;
-  else if( !plan->hasRally || previousHome != plan->home || previousObjective != plan->objective )
-    plan->hasRally = G_BotNavRallyPointForClass( plan->homePoint, plan->objectivePoint, routeClass, plan->rally );
-  plan->hasApproach = plan->home >= 0 && plan->hasEnemyBase &&
-    G_BotNavRallyPointForClass( plan->objectivePoint, plan->homePoint, routeClass, plan->approach );
-  BotTeamContacts( team, plan );
-  memcpy( wasDefending, plan->defending, sizeof( wasDefending ) );
-  memset( plan->defending, 0, sizeof( plan->defending ) );
+  if( previous != plan->objective )
+    for( i = 0; i < level.maxclients; i++ )
+    { plan->actors[ i ].searchUntil = 0; plan->actors[ i ].orderKind = BOT_ORDER_NONE; }
+}
+
+/* At most MAX_CLIENTS candidates per bot, proximity-filtered before real LOS.
+ * Sensing all clients avoids mistaking everyone's selected target for the
+ * entire enemy force. Allies share distinct currently seen players once. */
+static void BotTeamSense( team_t team, botTeamPlan_t *plan )
+{
+  int i, j, k, reports[ MAX_CLIENTS ];
+  float score, bestFocus = -1e30f, bestThreat = -1e30f, bestHunt = -1e30f, distance, best;
+  botTeamActor_t *actor;
+  gentity_t *ent, *other;
+  memset( reports, 0, sizeof( reports ) );
+  memset( plan->seen, 0, sizeof( plan->seen ) );
+  memset( plan->allySight, 0, sizeof( plan->allySight ) );
+  plan->focus = plan->threat = plan->hunt = -1; plan->threats = 0;
   for( i = 0; i < level.maxclients; i++ )
   {
-    if( !G_BotIsBot( i ) || g_botStates[ i ].team != team ) continue;
-    if( plan->enterTime[ i ] != level.clients[ i ].pers.enterTime ||
-        plan->memberSpawn[ i ] != g_botStates[ i ].spawnCount ||
-        plan->memberRole[ i ] != g_botStates[ i ].role )
+    actor = &plan->actors[ i ]; ent = &g_entities[ i ];
+    actor->allies = actor->enemies = actor->ownEnemies = 0;
+    actor->combatTarget = -1; actor->outnumbered = qfalse;
+    if( !BotTeamCombatant( ent, team ) ) continue;
+    plan->allySight[ i ][ i ] = qtrue;
+    for( j = i + 1; j < level.maxclients; j++ )
+      if( BotTeamCombatant( &g_entities[ j ], team ) &&
+          DistanceSquared( ent->r.currentOrigin, g_entities[ j ].r.currentOrigin ) <= BOT_TEAM_ALLY_RANGE * BOT_TEAM_ALLY_RANGE &&
+          BotTeamAllySight( ent, &g_entities[ j ] ) )
+      { plan->allySight[ i ][ j ] = plan->allySight[ j ][ i ] = qtrue; }
+    /* Human players reinforce without receiving bot orders or acting as
+     * additional automated enemy-position sensors. */
+    if( !G_BotIsBot( i ) ) continue;
+    actor->senseTime = level.time;
+    for( j = 0; j < level.maxclients; j++ )
     {
-      plan->enterTime[ i ] = level.clients[ i ].pers.enterTime;
-      plan->memberSpawn[ i ] = g_botStates[ i ].spawnCount;
-      plan->memberRole[ i ] = g_botStates[ i ].role;
-      plan->releasedSpawn[ i ] = -1; plan->wave[ i ] = plan->orderKind[ i ] = 0;
-      plan->escorting[ i ] = qfalse;
-      plan->searchUntil[ i ] = 0;
+      other = &g_entities[ j ];
+      if( !BotTeamEnemy( other, team ) ||
+          DistanceSquared( ent->r.currentOrigin, other->r.currentOrigin ) > BOT_TEAM_SIGHT_RANGE * BOT_TEAM_SIGHT_RANGE ||
+          !BotTeamSight( ent, other ) ) continue;
+      plan->seen[ i ][ j ] = qtrue; actor->ownEnemies++; reports[ j ]++;
+      plan->contactTime[ j ] = level.time;
+      VectorCopy( other->r.currentOrigin, plan->contactPoint[ j ] );
     }
-    if( plan->memberClass[ i ] != level.clients[ i ].ps.stats[ STAT_CLASS ] ||
-        ( previousObjective != plan->objective && g_botStates[ i ].role == BOT_ATTACK ) )
-    {
-      /* Evolving survivors and squads with a new building objective retain
-       * their release. Replan movement for the new hull/goal without recalling
-       * a healthy assault to its gathering point. */
-      plan->memberClass[ i ] = level.clients[ i ].ps.stats[ STAT_CLASS ];
-      plan->orderKind[ i ] = 0; plan->escorting[ i ] = qfalse;
-      plan->searchUntil[ i ] = 0;
-      G_BotNavClearRoute( i );
-    }
-    if( g_botStates[ i ].role == BOT_DEFEND ) plan->defending[ i ] = qtrue;
-    if( g_botStates[ i ].role != BOT_ATTACK ) continue;
-    roles++;
-    if( BotTeamAlive( &g_entities[ i ], team ) ) attackers++;
   }
-  critical = plan->home >= 0 &&
-    g_entities[ plan->home ].health < BG_Buildable( g_entities[ plan->home ].s.modelindex )->health * 0.4f;
-  wanted = plan->home >= 0 && plan->threat >= 0 ? MIN( critical ? 3 : 2, ( plan->threats + 1 ) / 2 ) : 0;
-  wanted = MIN( wanted, MAX( 1, attackers / 3 ) );
-  for( count = 0; count < wanted; count++ )
+  for( i = 0; i < level.maxclients; i++ )
   {
-    nearest = -1; best = 1e30f;
-    for( i = 0; i < level.maxclients; i++ )
+    actor = &plan->actors[ i ]; ent = &g_entities[ i ];
+    if( !BotTeamCombatant( ent, team ) ) continue;
+    for( j = 0; j < level.maxclients; j++ ) if( plan->allySight[ i ][ j ] ) actor->allies++;
+    if( !G_BotIsBot( i ) ) continue;
+    best = 1e30f;
+    for( j = 0; j < level.maxclients; j++ )
     {
-      if( !BotTeamAlive( &g_entities[ i ], team ) || g_botStates[ i ].role != BOT_ATTACK || plan->defending[ i ] ) continue;
-      if( !critical && BotTeamWave( plan, i ) && plan->releasedSpawn[ i ] == g_botStates[ i ].spawnCount ) continue;
-      distance = DistanceSquared( g_entities[ i ].r.currentOrigin, plan->homePoint );
-      if( distance < best && distance < 1200.0f * 1200.0f ) { nearest = i; best = distance; }
+      if( !reports[ j ] || DistanceSquared( ent->r.currentOrigin, plan->contactPoint[ j ] ) >
+          BOT_TEAM_SIGHT_RANGE * BOT_TEAM_SIGHT_RANGE ) continue;
+      for( k = 0; k < level.maxclients; k++ )
+        if( plan->allySight[ i ][ k ] && plan->seen[ k ][ j ] ) break;
+      if( k == level.maxclients ) continue;
+      actor->enemies++;
+      distance = DistanceSquared( ent->r.currentOrigin, plan->contactPoint[ j ] );
+      if( distance < best )
+      { best = distance; actor->combatTarget = j; VectorCopy( plan->contactPoint[ j ], actor->combatPoint ); }
     }
-    if( nearest < 0 ) break;
-    plan->defending[ nearest ] = qtrue;
-    if( !wasDefending[ nearest ] ) plan->dispatches++;
+    actor->outnumbered = actor->enemies > actor->allies;
+    actor->combatTime = actor->combatTarget >= 0 ? level.time : 0;
+    /* A previously occupied grounded position is an order only; navigation
+     * rechecks its present hull, support and hazards when revisiting it. */
+    if( !actor->outnumbered && ent->client->ps.groundEntityNum == ENTITYNUM_WORLD )
+    { actor->hasSafePoint = qtrue; VectorCopy( ent->r.currentOrigin, actor->safePoint ); }
   }
-  BotTeamUpdateWaves( team, plan );
-  needed = MIN( roles, MIN( BOT_TEAM_MAX_GROUP, MAX( 2, ( roles + 2 ) / 3 ) ) );
-  if( needed > 0 && plan->hasEnemyBase ) BotTeamLaunch( team, plan, needed );
+  for( i = 0; i < level.maxclients; i++ )
+  {
+    if( reports[ i ] )
+    {
+      score = reports[ i ] * 180.0f;
+      if( score > bestFocus )
+      { bestFocus = score; plan->focus = i; VectorCopy( plan->contactPoint[ i ], plan->focusPoint ); }
+      if( plan->home >= 0 && DistanceSquared( plan->homePoint, plan->contactPoint[ i ] ) < 900.0f * 900.0f )
+      {
+        plan->threats++; score = -DistanceSquared( plan->homePoint, plan->contactPoint[ i ] );
+        if( score > bestThreat )
+        { bestThreat = score; plan->threat = i; VectorCopy( plan->contactPoint[ i ], plan->threatPoint ); }
+      }
+      score = reports[ i ] * 100.0f - Distance( plan->objectivePoint, plan->contactPoint[ i ] ) * 0.1f;
+      if( score > bestHunt )
+      { bestHunt = score; plan->hunt = i; VectorCopy( plan->contactPoint[ i ], plan->huntPoint ); }
+      continue;
+    }
+    if( !plan->contactTime[ i ] || level.time - plan->contactTime[ i ] > BOT_TEAM_CONTACT_TIME ) continue;
+    for( j = 0; j < level.maxclients; j++ )
+      if( BotTeamAlive( &g_entities[ j ], team ) &&
+          DistanceSquared( g_entities[ j ].r.currentOrigin, plan->contactPoint[ i ] ) < 128.0f * 128.0f &&
+          BotTeamLineClear( g_entities[ j ].r.currentOrigin, plan->contactPoint[ i ] ) ) break;
+    if( j < level.maxclients ) { plan->contactTime[ i ] = 0; continue; }
+    /* Old sightings are search destinations only, never hidden live updates. */
+    score = -( level.time - plan->contactTime[ i ] ) * 0.05f -
+            Distance( plan->objectivePoint, plan->contactPoint[ i ] ) * 0.1f - 10000.0f;
+    if( score > bestHunt )
+    { bestHunt = score; plan->hunt = i; VectorCopy( plan->contactPoint[ i ], plan->huntPoint ); }
+  }
+}
+
+/* Recompute actual connected neighborhoods. Sorted IDs give stable bounded
+ * keys for identical membership. The representative never leads an escort. */
+static void BotTeamGroups( team_t team, botTeamPlan_t *plan )
+{
+  int i, j, head, tail, id, previous[ MAX_CLIENTS ], queue[ MAX_CLIENTS ], members[ MAX_CLIENTS ];
+  qboolean assigned[ MAX_CLIENTS ];
+  unsigned int signature;
+  vec3_t center;
+  memset( assigned, 0, sizeof( assigned ) );
+  plan->activeMembers = plan->basePressure = 0;
+  for( i = 0; i < level.maxclients; i++ )
+  {
+    previous[ i ] = plan->actors[ i ].group;
+    plan->actors[ i ].group = plan->actors[ i ].groupSize = 0;
+    plan->actors[ i ].representative = -1;
+    if( BotTeamAlive( &g_entities[ i ], team ) && g_botStates[ i ].role == BOT_ATTACK )
+    {
+      plan->activeMembers++;
+      if( plan->hasEnemyBase && DistanceSquared( g_entities[ i ].r.currentOrigin, plan->objectivePoint ) < 900.0f * 900.0f )
+        plan->basePressure++;
+    }
+  }
+  for( i = 0; i < level.maxclients; i++ )
+  {
+    if( assigned[ i ] || !BotTeamAlive( &g_entities[ i ], team ) || !BotTeamCombatant( &g_entities[ i ], team ) ) continue;
+    head = 0; tail = 1; queue[ 0 ] = i; assigned[ i ] = qtrue;
+    while( head < tail )
+    {
+      id = queue[ head++ ];
+      for( j = 0; j < level.maxclients; j++ )
+        if( !assigned[ j ] && BotTeamAlive( &g_entities[ j ], team ) && BotTeamCombatant( &g_entities[ j ], team ) &&
+            plan->allySight[ id ][ j ] && DistanceSquared( g_entities[ id ].r.currentOrigin, g_entities[ j ].r.currentOrigin ) <=
+            BOT_TEAM_GROUP_RANGE * BOT_TEAM_GROUP_RANGE )
+        { assigned[ j ] = qtrue; queue[ tail++ ] = j; }
+    }
+    memset( members, 0, sizeof( members ) ); VectorClear( center ); signature = 5381u;
+    for( j = 0; j < tail; j++ ) members[ queue[ j ] ] = 1;
+    for( j = 0; j < level.maxclients; j++ )
+      if( members[ j ] )
+      { signature = signature * 33u + (unsigned int)( j + 1 ); VectorAdd( center, g_entities[ j ].r.currentOrigin, center ); }
+    VectorScale( center, 1.0f / tail, center );
+    id = (int)( signature & 0x3fffffffu ) + 1;
+    if( tail > plan->peakGroup ) plan->peakGroup = tail;
+    if( previous[ i ] != id && tail > 1 ) plan->formations++;
+    for( j = 0; j < tail; j++ )
+    {
+      botTeamActor_t *actor = &plan->actors[ queue[ j ] ];
+      actor->group = id; actor->groupSize = tail; actor->representative = i;
+      VectorCopy( center, actor->center );
+      if( previous[ queue[ j ] ] != id ) plan->membershipChanges++;
+    }
+  }
+}
+
+/* Prefer actual armed reinforcements and movement away from the seen threat.
+ * Another withdrawing actor must itself head away, avoiding circular chasing
+ * that returns both actors toward the enemy. */
+static int BotTeamReinforcement( gentity_t *ent, team_t team, botTeamPlan_t *plan,
+                                botTeamActor_t *actor, qboolean retreat )
+{
+  int i, result = -1;
+  float distance, separation, score, best = -1e30f;
+  float threatDistance = Distance( ent->r.currentOrigin, actor->combatPoint );
+  botTeamActor_t *other;
+  for( i = 0; i < level.maxclients; i++ )
+  {
+    if( i == ent->s.number || !BotTeamCombatant( &g_entities[ i ], team ) ||
+        g_entities[ i ].health < g_entities[ i ].client->ps.stats[ STAT_MAX_HEALTH ] * 0.25f ) continue;
+    distance = Distance( ent->r.currentOrigin, g_entities[ i ].r.currentOrigin );
+    if( distance < 180.0f || distance > 1800.0f ) continue;
+    other = &plan->actors[ i ];
+    separation = Distance( g_entities[ i ].r.currentOrigin, actor->combatPoint ) - threatDistance;
+    if( retreat )
+    {
+      if( separation < 64.0f ) continue;
+      if( other->regroupReason == BOT_REGROUP_RETREAT && other->regroupUntil > level.time &&
+          Distance( other->regroupPoint, actor->combatPoint ) + 32.0f <
+          Distance( g_entities[ i ].r.currentOrigin, actor->combatPoint ) ) continue;
+    }
+    else if( !G_BotIsBot( i ) || g_botStates[ i ].role != BOT_ATTACK ||
+             other->regroupReason == BOT_REGROUP_RETREAT || distance > 1200.0f ) continue;
+    score = other->allies * 160.0f + separation * ( retreat ? 0.65f : -0.15f ) - distance * 0.35f;
+    if( i == actor->regroupTarget ) score += 80.0f;
+    if( score > best ) { best = score; result = i; }
+  }
+  return result;
+}
+
+static void BotTeamWithdrawPoint( gentity_t *ent, botTeamPlan_t *plan, botTeamActor_t *actor, vec3_t point )
+{
+  vec3_t away;
+  float distance = Distance( ent->r.currentOrigin, actor->combatPoint );
+  if( actor->hasSafePoint && DistanceSquared( ent->r.currentOrigin, actor->safePoint ) > 128.0f * 128.0f &&
+      Distance( actor->safePoint, actor->combatPoint ) > distance + 64.0f )
+  { VectorCopy( actor->safePoint, point ); return; }
+  if( plan->home >= 0 && DistanceSquared( ent->r.currentOrigin, plan->homePoint ) > 200.0f * 200.0f &&
+      Distance( plan->homePoint, actor->combatPoint ) > distance + 96.0f )
+  { VectorCopy( plan->homePoint, point ); return; }
+  /* With nobody to reinforce, request a short withdrawal. NavMove must prove
+   * the full hull, support and hazards; this is never direct displacement. */
+  VectorSubtract( ent->r.currentOrigin, actor->combatPoint, away ); away[ 2 ] = 0.0f;
+  if( VectorNormalize( away ) < 0.1f )
+  { away[ 0 ] = ( ent->s.number & 1 ) ? 1.0f : -1.0f; away[ 1 ] = 0.0f; }
+  VectorMA( ent->r.currentOrigin, 224.0f, away, point );
+}
+
+static void BotTeamRegroup( team_t team, botTeamPlan_t *plan )
+{
+  int i, target, reason;
+  botTeamActor_t *actor;
+  gentity_t *ent;
+  plan->regrouping = 0;
+  for( i = 0; i < level.maxclients; i++ )
+  {
+    actor = &plan->actors[ i ]; ent = &g_entities[ i ];
+    if( !BotTeamAlive( ent, team ) || !BotTeamCombatant( ent, team ) || actor->combatTarget < 0 )
+    { actor->regroupReason = BOT_REGROUP_NONE; actor->regroupUntil = actor->regroupSince = 0; continue; }
+    reason = actor->outnumbered ? BOT_REGROUP_RETREAT : BOT_REGROUP_NONE;
+    if( reason == BOT_REGROUP_NONE && team == TEAM_ALIENS && g_botStates[ i ].role == BOT_ATTACK &&
+        actor->allies == 1 && actor->enemies > 0 &&
+        ( actor->regroupReason == BOT_REGROUP_JOIN || level.time >= actor->regroupCooldown ) ) reason = BOT_REGROUP_JOIN;
+    if( reason == BOT_REGROUP_NONE )
+    {
+      if( actor->regroupReason ) actor->regroupCooldown = level.time + 8000;
+      actor->regroupReason = BOT_REGROUP_NONE; actor->regroupUntil = actor->regroupSince = 0;
+      continue;
+    }
+    target = BotTeamReinforcement( ent, team, plan, actor, reason == BOT_REGROUP_RETREAT );
+    if( reason == BOT_REGROUP_JOIN && target < 0 )
+    { actor->regroupReason = BOT_REGROUP_NONE; actor->regroupUntil = actor->regroupSince = 0; continue; }
+    if( actor->regroupReason != reason )
+    {
+      actor->regroupSince = level.time;
+      if( reason == BOT_REGROUP_RETREAT ) plan->withdrawals++;
+    }
+    actor->regroupReason = reason; actor->regroupTarget = target;
+    if( target >= 0 ) VectorCopy( g_entities[ target ].r.currentOrigin, actor->regroupPoint );
+    else BotTeamWithdrawPoint( ent, plan, actor, actor->regroupPoint );
+    if( reason == BOT_REGROUP_JOIN && ( level.time - actor->regroupSince >= 2500 ||
+        DistanceSquared( ent->r.currentOrigin, actor->regroupPoint ) < 220.0f * 220.0f ) )
+    {
+      actor->regroupReason = BOT_REGROUP_NONE; actor->regroupUntil = actor->regroupSince = 0;
+      actor->regroupCooldown = level.time + 8000; continue;
+    }
+    /* Counts release a withdrawal immediately after support removes the local
+     * disadvantage. Brief joins can never become a home launch requirement. */
+    actor->regroupUntil = level.time + BOT_TEAM_FRESH_TIME; plan->regrouping++;
+  }
+}
+
+static void BotTeamPlan( team_t team, botTeamPlan_t *plan )
+{
+  int i;
+  botTeamActor_t *actor;
+  for( i = 0; i < level.maxclients; i++ )
+  {
+    actor = &plan->actors[ i ];
+    if( !G_BotIsBot( i ) || g_botStates[ i ].team != team )
+    { BotTeamClearActor( actor ); continue; }
+    if( actor->enterTime != level.clients[ i ].pers.enterTime ||
+        actor->spawn != g_botStates[ i ].spawnCount || actor->role != g_botStates[ i ].role )
+    {
+      BotTeamClearActor( actor ); actor->enterTime = level.clients[ i ].pers.enterTime;
+      actor->spawn = g_botStates[ i ].spawnCount; actor->role = g_botStates[ i ].role;
+    }
+    if( actor->classNum != level.clients[ i ].ps.stats[ STAT_CLASS ] )
+    {
+      actor->classNum = level.clients[ i ].ps.stats[ STAT_CLASS ];
+      actor->searchUntil = 0; actor->orderKind = BOT_ORDER_NONE; G_BotNavClearRoute( i );
+    }
+  }
+  BotTeamObjectives( team, plan ); BotTeamSense( team, plan );
+  BotTeamGroups( team, plan ); BotTeamRegroup( team, plan );
 }
 
 void G_BotTeamFrame( void )
@@ -479,34 +460,105 @@ void G_BotTeamFrame( void )
   if( !g_botTeamwork.integer ) return;
   for( team = TEAM_ALIENS; team <= TEAM_HUMANS; team++ )
     if( level.time >= botTeams[ team ].nextPlan )
-    { botTeams[ team ].nextPlan = level.time + 1000; BotTeamPlan( team, &botTeams[ team ] ); }
+    { botTeams[ team ].nextPlan = level.time + BOT_TEAM_PLAN_TIME; BotTeamPlan( team, &botTeams[ team ] ); }
 }
 
-static void BotTeamSpaceGoal( gentity_t *ent, team_t team, botTeamPlan_t *plan, vec3_t goal )
+static botTeamActor_t *BotTeamActor( gentity_t *ent )
 {
-  int i;
-  float distance = DistanceSquared( ent->r.currentOrigin, goal ), otherDistance;
-  /* A queue outside the rally area needs to keep moving and use navigation's
-   * collision recovery. Holding behind its blocked front member can otherwise
-   * strand every follower indefinitely, without any being ready to launch. */
-  if( !BotTeamNearRally( ent, plan ) ) return;
-  if( distance < 160.0f * 160.0f ) { VectorCopy( ent->r.currentOrigin, goal ); return; }
+  team_t team;
+  botTeamActor_t *actor;
+  int id;
+  if( !g_botTeamwork.integer || !ent || !ent->client ) return NULL;
+  id = ent->s.number; team = ent->client->pers.teamSelection;
+  if( id < 0 || id >= level.maxclients || !G_BotIsBot( id ) ||
+      ( team != TEAM_HUMANS && team != TEAM_ALIENS ) || !BotTeamAlive( ent, team ) ) return NULL;
+  actor = &botTeams[ team ].actors[ id ];
+  if( actor->enterTime != ent->client->pers.enterTime || actor->spawn != g_botStates[ id ].spawnCount ||
+      actor->role != g_botStates[ id ].role ) return NULL;
+  return actor;
+}
+
+static qboolean BotTeamFresh( botTeamActor_t *actor )
+{
+  return actor && actor->combatTarget >= 0 && actor->combatTime > 0 &&
+    level.time - actor->combatTime <= BOT_TEAM_FRESH_TIME;
+}
+
+static void BotTeamOrder( botTeamPlan_t *plan, botTeamActor_t *actor, int kind, int target )
+{
+  if( actor->orderKind != kind || actor->orderTarget != target )
+  { plan->advanceOrders++; actor->orderKind = kind; actor->orderTarget = target; }
+}
+
+qboolean G_BotTeamRally( gentity_t *ent, botState_t *bot, vec3_t goal )
+{
+  botTeamActor_t *actor = BotTeamActor( ent );
+  if( bot->role == BOT_BUILD || !BotTeamFresh( actor ) || !actor->regroupReason || actor->regroupUntil <= level.time ) return qfalse;
+  VectorCopy( actor->regroupPoint, goal );
+  BotTeamOrder( &botTeams[ bot->team ], actor, BOT_ORDER_REGROUP, actor->regroupTarget );
+  return qtrue;
+}
+
+/* Each actor receives independent static search assignments, without an
+ * invisible enemy position or permanent leader determining map coverage. */
+static qboolean BotTeamSearchGoal( gentity_t *ent, botState_t *bot, botTeamPlan_t *plan,
+                                   botTeamActor_t *actor, vec3_t goal )
+{
+  int classNum = ent->client->ps.stats[ STAT_CLASS ];
+  if( plan->hunt >= 0 )
+  { VectorCopy( plan->huntPoint, goal ); BotTeamOrder( plan, actor, BOT_ORDER_SEARCH, plan->hunt ); return qtrue; }
+  if( actor->searchSpawn != bot->spawnCount || actor->searchClass != classNum ) actor->searchUntil = 0;
+  if( actor->searchUntil <= level.time || DistanceSquared( ent->r.currentOrigin, actor->searchPoint ) < 128.0f * 128.0f )
+  {
+    if( G_BotNavScoutPoint( ent, bot->team, actor->searchPoint ) != qtrue ) return qfalse;
+    actor->searchSpawn = bot->spawnCount; actor->searchClass = classNum;
+    actor->searchUntil = level.time + BOT_TEAM_SEARCH_TIME;
+  }
+  VectorCopy( actor->searchPoint, goal ); BotTeamOrder( plan, actor, BOT_ORDER_SEARCH, -1 ); return qtrue;
+}
+
+static qboolean BotTeamAttackGoal( gentity_t *ent, botState_t *bot, botTeamPlan_t *plan,
+                                   botTeamActor_t *actor, vec3_t goal )
+{
+  int i, target = -1;
+  float distance, best = 1200.0f * 1200.0f;
+  botTeamActor_t *other;
+  if( G_BotTeamRally( ent, bot, goal ) ) return qtrue;
+  /* Capable attackers near the enemy base retain demolition priority when
+   * their local force has enough support. Others converge on sensed fights. */
+  if( BotTeamFresh( actor ) && !( plan->hasEnemyBase && plan->objective >= 0 &&
+      BotTeamStructureAttack( ent, &g_entities[ plan->objective ] ) && !actor->outnumbered &&
+      DistanceSquared( ent->r.currentOrigin, plan->objectivePoint ) < 650.0f * 650.0f ) )
+  { VectorCopy( actor->combatPoint, goal ); BotTeamOrder( plan, actor, BOT_ORDER_FIGHT, actor->combatTarget ); return qtrue; }
+  /* Current nearby fights draw reinforcements. Support goes to outnumbered
+   * allies' withdrawal points rather than charging into their attackers. */
   for( i = 0; i < level.maxclients; i++ )
   {
-    if( i == ent->s.number || !BotTeamAlive( &g_entities[ i ], team ) || g_botStates[ i ].role != BOT_ATTACK ||
-        DistanceSquared( ent->r.currentOrigin, g_entities[ i ].r.currentOrigin ) > 70.0f * 70.0f ) continue;
-    otherDistance = DistanceSquared( g_entities[ i ].r.currentOrigin, goal );
-    if( otherDistance < distance || ( otherDistance == distance && i < ent->s.number ) )
-    { VectorCopy( ent->r.currentOrigin, goal ); return; }
+    if( i == ent->s.number || !BotTeamCombatant( &g_entities[ i ], bot->team ) ) continue;
+    other = &plan->actors[ i ];
+    if( !other->combatTime || level.time - other->combatTime > BOT_TEAM_FRESH_TIME ) continue;
+    distance = DistanceSquared( ent->r.currentOrigin,
+      other->outnumbered && other->regroupUntil > level.time ? other->regroupPoint : other->combatPoint );
+    if( distance < best ) { best = distance; target = i; }
   }
+  if( target >= 0 && !BotTeamFresh( actor ) )
+  {
+    other = &plan->actors[ target ];
+    VectorCopy( other->outnumbered && other->regroupUntil > level.time ? other->regroupPoint : other->combatPoint, goal );
+    BotTeamOrder( plan, actor, BOT_ORDER_FIGHT, other->combatTarget ); return qtrue;
+  }
+  if( BotTeamSearching( ent, plan ) ) return BotTeamSearchGoal( ent, bot, plan, actor, goal );
+  if( plan->objective < 0 ) return qfalse;
+  if( !BotTeamStructureAttack( ent, &g_entities[ plan->objective ] ) &&
+      DistanceSquared( ent->r.currentOrigin, plan->objectivePoint ) < 260.0f * 260.0f )
+    return BotTeamSearchGoal( ent, bot, plan, actor, goal );
+  VectorCopy( plan->objectivePoint, goal ); BotTeamOrder( plan, actor, BOT_ORDER_ATTACK, plan->objective ); return qtrue;
 }
 
 static float BotTeamDangerRange( gentity_t *ent, gentity_t *enemy )
 {
   if( !enemy->client )
   {
-    /* Once a ranged attacker has a firing position on a visible structure,
-     * leave the combat module in control instead of walking into its centre. */
     if( ent->client->pers.teamSelection == TEAM_HUMANS )
       switch( ent->client->ps.weapon )
       {
@@ -522,7 +574,6 @@ static float BotTeamDangerRange( gentity_t *ent, gentity_t *enemy )
     return 100.0f;
   }
   if( ent->client->pers.teamSelection == TEAM_HUMANS )
-  {
     switch( enemy->client->ps.stats[ STAT_CLASS ] )
     {
       case PCL_ALIEN_LEVEL4: return 450.0f;
@@ -532,7 +583,6 @@ static float BotTeamDangerRange( gentity_t *ent, gentity_t *enemy )
       case PCL_ALIEN_LEVEL2_UPG: return 230.0f;
       default: return 170.0f;
     }
-  }
   switch( ent->client->ps.weapon )
   {
     case WP_ALEVEL3:
@@ -543,190 +593,82 @@ static float BotTeamDangerRange( gentity_t *ent, gentity_t *enemy )
   }
 }
 
-static qboolean BotTeamCloseEnemy( gentity_t *ent, botState_t *bot, float minimum )
+static qboolean BotTeamCloseEnemy( gentity_t *ent, botState_t *bot )
 {
   int target = bot->target;
   float range;
-  if( target < 0 || target >= level.num_entities || !BotTeamEnemy( &g_entities[ target ], bot->team ) ) return qfalse;
-  range = MAX( minimum, BotTeamDangerRange( ent, &g_entities[ target ] ) );
+  if( target < 0 || target >= level.num_entities || !BotTeamEnemy( &g_entities[ target ], bot->team ) ||
+      !BotTeamSight( ent, &g_entities[ target ] ) ) return qfalse;
+  range = BotTeamDangerRange( ent, &g_entities[ target ] );
   return DistanceSquared( ent->r.currentOrigin, g_entities[ target ].r.currentOrigin ) < range * range;
-}
-
-qboolean G_BotTeamRally( gentity_t *ent, botState_t *bot, vec3_t goal )
-{
-  botTeamPlan_t *plan;
-  if( !g_botTeamwork.integer || bot->team == TEAM_NONE || bot->role != BOT_ATTACK ) return qfalse;
-  plan = &botTeams[ bot->team ];
-  if( !plan->hasEnemyBase || plan->home < 0 || plan->defending[ ent->s.number ] || !plan->hasRally ||
-      ( plan->releasedSpawn[ ent->s.number ] == bot->spawnCount && BotTeamWave( plan, ent->s.number ) ) ) return qfalse;
-  if( BotTeamCloseEnemy( ent, bot, 180.0f ) ) return qfalse;
-  if( plan->threat >= 0 && DistanceSquared( ent->r.currentOrigin, plan->threatPoint ) < 180.0f * 180.0f ) return qfalse;
-  VectorCopy( plan->rally, goal ); BotTeamSpaceGoal( ent, bot->team, plan, goal );
-  return qtrue;
-}
-
-/* Search the known map after infrastructure is gone. Separate retained goals
- * and team-wide navigation assignment stamps distribute coverage among allies.
- * This also works for a lone survivor without an active attack wave. */
-static qboolean BotTeamSearchGoal( gentity_t *ent, botState_t *bot,
-                                    botTeamPlan_t *plan, vec3_t goal )
-{
-  int id = ent->s.number, classNum = ent->client->ps.stats[ STAT_CLASS ];
-  if( plan->hunt >= 0 )
-  { VectorCopy( plan->huntPoint, goal ); return qtrue; }
-  if( plan->searchSpawn[ id ] != bot->spawnCount || plan->searchClass[ id ] != classNum )
-    plan->searchUntil[ id ] = 0;
-  if( plan->searchUntil[ id ] <= level.time ||
-      DistanceSquared( ent->r.currentOrigin, plan->searchPoint[ id ] ) < 128.0f * 128.0f )
-  {
-    if( G_BotNavScoutPoint( ent, bot->team, plan->searchPoint[ id ] ) != qtrue ) return qfalse;
-    plan->searchSpawn[ id ] = bot->spawnCount;
-    plan->searchClass[ id ] = classNum;
-    plan->searchUntil[ id ] = level.time + BOT_TEAM_SEARCH_TIME;
-  }
-  VectorCopy( plan->searchPoint[ id ], goal );
-  return qtrue;
-}
-
-static qboolean BotTeamAttackGoal( gentity_t *ent, botState_t *bot, botTeamPlan_t *plan,
-                                  botAttackWave_t *wave, vec3_t goal, int *kind, int *target )
-{
-  gentity_t *leader;
-  int id = ent->s.number;
-  float distance;
-  *kind = 1; *target = plan->objective;
-  if( BotTeamSearching( ent, plan ) )
-  { *kind = 5; *target = plan->hunt; return BotTeamSearchGoal( ent, bot, plan, goal ); }
-  if( plan->home < 0 )
-  { VectorCopy( plan->objectivePoint, goal ); return qtrue; }
-  if( !wave || wave->leader < 0 ) return qfalse;
-  leader = &g_entities[ wave->leader ];
-  if( wave->leader != id )
-  {
-    distance = DistanceSquared( ent->r.currentOrigin, leader->r.currentOrigin );
-    if( distance > 600.0f * 600.0f ) plan->escorting[ id ] = qtrue;
-    else if( distance < 300.0f * 300.0f ) plan->escorting[ id ] = qfalse;
-    if( plan->escorting[ id ] )
-    { VectorCopy( leader->r.currentOrigin, goal ); *kind = 2; *target = wave->leader; return qtrue; }
-  }
-  else if( wave->members > 2 && wave->nearLeader < 2 && wave->holdSince &&
-           level.time - wave->holdSince < 3000 )
-  { VectorCopy( ent->r.currentOrigin, goal ); *kind = 3; *target = id; return qtrue; }
-  if( bot->team == TEAM_ALIENS && plan->objective >= 0 &&
-      !BotTeamStructureAttack( ent, &g_entities[ plan->objective ] ) )
-  {
-    /* Small aliens screen players while evolved wave leaders demolish the base. */
-    if( wave->leader != id && leader->client->ps.weapon != WP_ALEVEL0 )
-    {
-      if( DistanceSquared( ent->r.currentOrigin, leader->r.currentOrigin ) > 220.0f * 220.0f )
-      { VectorCopy( leader->r.currentOrigin, goal ); *kind = 2; *target = wave->leader; return qtrue; }
-    }
-    if( plan->hunt >= 0 ) { VectorCopy( plan->huntPoint, goal ); *kind = 4; *target = plan->hunt; return qtrue; }
-    if( plan->hasApproach ) { VectorCopy( plan->approach, goal ); return qtrue; }
-    return qfalse;
-  }
-  if( plan->objective < 0 && plan->hunt >= 0 )
-  { VectorCopy( plan->huntPoint, goal ); *kind = 4; *target = plan->hunt; return qtrue; }
-  if( !plan->hasEnemyBase ) return qfalse;
-  VectorCopy( plan->objectivePoint, goal );
-  return qtrue;
-}
-
-qboolean G_BotTeamAdvance( gentity_t *ent, botState_t *bot, vec3_t goal )
-{
-  botTeamPlan_t *plan;
-  botAttackWave_t *wave;
-  int kind, target, id = ent->s.number;
-  if( !g_botTeamwork.integer || bot->team == TEAM_NONE || bot->role != BOT_ATTACK ) return qfalse;
-  plan = &botTeams[ bot->team ]; wave = BotTeamWave( plan, id );
-  /* While searching, keep pursuing a currently sighted player rather than
-   * replacing that combat movement with the next static patrol assignment. */
-  if( BotTeamSearching( ent, plan ) && bot->target >= 0 && bot->target < level.maxclients &&
-      BotTeamEnemy( &g_entities[ bot->target ], bot->team ) ) return qfalse;
-  if( ( plan->home >= 0 && plan->hasEnemyBase &&
-        ( plan->defending[ id ] || plan->releasedSpawn[ id ] != bot->spawnCount || !wave ) ) ||
-      BotTeamCloseEnemy( ent, bot, 0.0f ) )
-  { plan->orderKind[ id ] = 0; return qfalse; }
-  if( !BotTeamAttackGoal( ent, bot, plan, wave, goal, &kind, &target ) ) return qfalse;
-  /* Count distinct changes of movement order, not every 100ms bot think. */
-  if( plan->orderKind[ id ] != kind || plan->orderTarget[ id ] != target )
-  { plan->advanceOrders++; plan->orderKind[ id ] = kind; plan->orderTarget[ id ] = target; }
-  return qtrue;
 }
 
 qboolean G_BotTeamGoal( gentity_t *ent, botState_t *bot, vec3_t goal )
 {
+  botTeamActor_t *actor = BotTeamActor( ent );
   botTeamPlan_t *plan;
-  botAttackWave_t *wave;
-  int kind, target;
-  if( !g_botTeamwork.integer || bot->team == TEAM_NONE || bot->role == BOT_BUILD ) return qfalse;
+  if( !actor || bot->role == BOT_BUILD ) return qfalse;
   plan = &botTeams[ bot->team ];
-  if( BotTeamSearching( ent, plan ) ) return BotTeamSearchGoal( ent, bot, plan, goal );
-  if( plan->home < 0 )
-  { VectorCopy( plan->objectivePoint, goal ); return qtrue; }
-  if( bot->role == BOT_DEFEND || plan->defending[ ent->s.number ] )
+  if( G_BotTeamRally( ent, bot, goal ) ) return qtrue;
+  if( bot->role == BOT_DEFEND && plan->home >= 0 )
   {
-    if( plan->threat >= 0 ) VectorCopy( plan->threatPoint, goal );
-    else if( plan->hasRally ) VectorCopy( plan->rally, goal );
-    else VectorCopy( plan->homePoint, goal );
+    if( plan->threat >= 0 )
+    { VectorCopy( plan->threatPoint, goal ); BotTeamOrder( plan, actor, BOT_ORDER_DEFEND, plan->threat ); }
+    else
+    {
+      if( DistanceSquared( ent->r.currentOrigin, plan->homePoint ) < 260.0f * 260.0f )
+        VectorCopy( ent->r.currentOrigin, goal );
+      else VectorCopy( plan->homePoint, goal );
+      BotTeamOrder( plan, actor, BOT_ORDER_DEFEND, plan->home );
+    }
     return qtrue;
   }
-  if( G_BotTeamRally( ent, bot, goal ) ) return qtrue;
-  wave = BotTeamWave( plan, ent->s.number );
-  return BotTeamAttackGoal( ent, bot, plan, wave, goal, &kind, &target );
+  return BotTeamAttackGoal( ent, bot, plan, actor, goal );
+}
+
+qboolean G_BotTeamAdvance( gentity_t *ent, botState_t *bot, vec3_t goal )
+{
+  botTeamActor_t *actor = BotTeamActor( ent );
+  if( !actor || bot->role == BOT_BUILD || actor->regroupUntil > level.time || BotTeamCloseEnemy( ent, bot ) ) return qfalse;
+  if( bot->role == BOT_DEFEND && botTeams[ bot->team ].threat < 0 ) return qfalse;
+  return G_BotTeamGoal( ent, bot, goal );
 }
 
 qboolean G_BotTeamAssaultPoint( team_t team, vec3_t goal )
 {
-  botTeamPlan_t *plan;
-  if( !g_botTeamwork.integer || ( team != TEAM_HUMANS && team != TEAM_ALIENS ) )
-    return qfalse;
-  plan = &botTeams[ team ];
-  if( !plan->hasEnemyBase ) return qfalse;
-  VectorCopy( plan->objectivePoint, goal );
-  return qtrue;
+  if( !g_botTeamwork.integer || ( team != TEAM_HUMANS && team != TEAM_ALIENS ) || !botTeams[ team ].hasEnemyBase ) return qfalse;
+  VectorCopy( botTeams[ team ].objectivePoint, goal ); return qtrue;
 }
 
-/* Navigation can prefer different safe corridors without splitting a squad.
- * Wave serials belong to a team; compare the team as well as this key when
- * measuring other squads' traffic. Negative personal keys remain stable for
- * one life and are separate from positive wave serials. No game RNG is used. */
 int G_BotTeamRouteGroup( gentity_t *ent )
 {
-  botState_t *bot;
-  botTeamPlan_t *plan;
-  botAttackWave_t *wave;
-  int id;
+  botTeamActor_t *actor = BotTeamActor( ent );
+  if( !actor ) return 0;
+  if( actor->groupSize > 1 ) return actor->group;
+  return -( 1 + ent->s.number * 17 + g_botStates[ ent->s.number ].spawnCount * 7 );
+}
 
-  if( !g_botTeamwork.integer || !ent || !ent->client ) return 0;
-  id = ent->s.number;
-  if( id < 0 || id >= MAX_CLIENTS || !G_BotIsBot( id ) ) return 0;
-  bot = &g_botStates[ id ];
-  if( bot->team != TEAM_HUMANS && bot->team != TEAM_ALIENS ) return 0;
-  plan = &botTeams[ bot->team ];
-  wave = BotTeamWave( plan, id );
-  if( bot->role == BOT_ATTACK && !plan->defending[ id ] && wave &&
-      plan->releasedSpawn[ id ] == bot->spawnCount ) return wave->serial;
-  return -( 1 + id * 17 + bot->spawnCount * 7 );
+qboolean G_BotTeamCombatContext( gentity_t *ent, vec3_t threat, int *allies, int *enemies, qboolean *retreat )
+{
+  botTeamActor_t *actor = BotTeamActor( ent );
+  if( allies ) *allies = actor ? actor->allies : 0;
+  if( enemies ) *enemies = BotTeamFresh( actor ) ? actor->enemies : 0;
+  if( retreat ) *retreat = BotTeamFresh( actor ) && actor->outnumbered;
+  if( !BotTeamFresh( actor ) ) return qfalse;
+  VectorCopy( actor->combatPoint, threat ); return qtrue;
 }
 
 float G_BotTeamTargetBonus( gentity_t *ent, gentity_t *target )
 {
+  botTeamActor_t *actor = BotTeamActor( ent );
   botTeamPlan_t *plan;
-  team_t team = ent->client->pers.teamSelection;
   float bonus = 0.0f;
-  int id = ent->s.number;
-  if( !g_botTeamwork.integer || team == TEAM_NONE ) return 0.0f;
-  plan = &botTeams[ team ];
-  if( target->s.number == plan->focus ) bonus += 250.0f;
-  if( target->s.number == plan->threat && plan->defending[ id ] ) bonus += 650.0f;
-  /* An assembled assault must shoot objectives instead of farming each fresh
-   * defender forever. The combat selector still requires real visibility. */
-  if( ( plan->basePressure >= 2 ||
-        ( plan->hasEnemyBase && DistanceSquared( ent->r.currentOrigin, plan->objectivePoint ) < 650.0f * 650.0f ) ) &&
-      BotTeamWave( plan, id ) &&
-      plan->releasedSpawn[ id ] == g_botStates[ id ].spawnCount && !plan->defending[ id ] &&
-      BotTeamStructureAttack( ent, target ) )
+  if( !actor ) return bonus;
+  plan = &botTeams[ ent->client->pers.teamSelection ];
+  if( BotTeamFresh( actor ) && target->s.number == actor->combatTarget ) bonus += 250.0f;
+  if( target->s.number == plan->threat && g_botStates[ ent->s.number ].role == BOT_DEFEND ) bonus += 650.0f;
+  if( g_botStates[ ent->s.number ].role == BOT_ATTACK && !actor->outnumbered && plan->hasEnemyBase &&
+      DistanceSquared( ent->r.currentOrigin, plan->objectivePoint ) < 650.0f * 650.0f && BotTeamStructureAttack( ent, target ) )
   {
     if( target->s.number == plan->objective ) bonus += 1700.0f;
     else if( BG_Buildable( target->s.modelindex )->turretRange > 0 &&
@@ -737,22 +679,56 @@ float G_BotTeamTargetBonus( gentity_t *ent, gentity_t *target )
   return bonus;
 }
 
-void G_BotTeamMetrics( team_t team, int *waves, int *rallied, int *dispatches, int *focus )
+void G_BotTeamDebugJSON( gentity_t *ent, char *out, int size )
 {
-  botTeamPlan_t *plan = &botTeams[ team ];
-  *waves = plan->waves; *rallied = plan->rallied;
-  *dispatches = plan->dispatches; *focus = plan->focus;
+  botTeamActor_t *actor = BotTeamActor( ent );
+  botTeamPlan_t *plan;
+  const char *names[] = { "none", "attack", "fight", "regroup", "defend", "search" };
+  char members[ 256 ];
+  int i, length = 0;
+  if( !actor ) { Q_strncpyz( out, "{}", size ); return; }
+  plan = &botTeams[ ent->client->pers.teamSelection ]; members[ 0 ] = '\0';
+  for( i = 0; i < level.maxclients; i++ )
+    if( actor->group && plan->actors[ i ].group == actor->group )
+    {
+      Com_sprintf( members + length, sizeof( members ) - length, "%s%d", length ? "," : "", i );
+      length = strlen( members );
+    }
+  Com_sprintf( out, size,
+    "{\"group_id\":%d,\"representative_id\":%d,\"member_ids\":[%s],\"group_size\":%d,"
+    "\"order\":%d,\"order_name\":\"%s\",\"order_target\":%d,"
+    "\"nearby_allies\":%d,\"nearby_enemies\":%d,\"own_visible_enemies\":%d,"
+    "\"retreating\":%d,\"regrouping\":%d,\"regroup_reason\":%d,\"regroup_target\":%d,\"regroup_ms\":%d,"
+    "\"group_center\":[%.1f,%.1f,%.1f],\"threat_id\":%d,\"threat_point\":[%.1f,%.1f,%.1f],"
+    "\"regroup_goal\":[%.1f,%.1f,%.1f],\"decision_age_ms\":%d,\"contact_age_ms\":%d}",
+    actor->group, actor->representative, members, actor->groupSize,
+    actor->orderKind, names[ actor->orderKind ], actor->orderTarget,
+    actor->allies, BotTeamFresh( actor ) ? actor->enemies : 0, actor->ownEnemies,
+    BotTeamFresh( actor ) && actor->outnumbered, actor->regroupUntil > level.time,
+    actor->regroupReason, actor->regroupTarget, MAX( 0, actor->regroupUntil - level.time ),
+    actor->center[ 0 ], actor->center[ 1 ], actor->center[ 2 ], actor->combatTarget,
+    actor->combatPoint[ 0 ], actor->combatPoint[ 1 ], actor->combatPoint[ 2 ],
+    actor->regroupPoint[ 0 ], actor->regroupPoint[ 1 ], actor->regroupPoint[ 2 ],
+    actor->senseTime ? level.time - actor->senseTime : -1,
+    actor->combatTime ? level.time - actor->combatTime : -1 );
 }
 
-void G_BotTeamCohortMetrics( team_t team, int *launchedMembers, int *peakGroup, int *advanceOrders, int *activeMembers )
+void G_BotTeamMetrics( team_t team, int *formations, int *regrouping, int *withdrawals, int *focus )
 {
   botTeamPlan_t *plan = &botTeams[ team ];
-  *launchedMembers = plan->launchedMembers; *peakGroup = plan->peakGroup;
-  *advanceOrders = plan->advanceOrders; *activeMembers = plan->activeMembers;
+  *formations = plan->formations; *regrouping = plan->regrouping;
+  *withdrawals = plan->withdrawals; *focus = plan->focus;
+}
+
+void G_BotTeamCohortMetrics( team_t team, int *membershipChanges, int *peak, int *orders, int *active )
+{
+  botTeamPlan_t *plan = &botTeams[ team ];
+  *membershipChanges = plan->membershipChanges; *peak = plan->peakGroup;
+  *orders = plan->advanceOrders; *active = plan->activeMembers;
 }
 
 void G_BotTeamProgressMetrics( team_t team, int *renewals, int *recalls )
 {
-  *renewals = botTeams[ team ].progressRenewals;
-  *recalls = botTeams[ team ].timedRecalls;
+  /* Fixed-wave lifetimes were removed. */
+  *renewals = *recalls = 0;
 }

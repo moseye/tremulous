@@ -271,6 +271,7 @@ void player_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
     obit = modNames[ meansOfDeath ];
 
   G_BotBenchmarkDeath( self, attacker );
+  G_BotCelebrateKill( self, attacker );
   G_LogPrintf( "Die: %d %d %s: %s" S_COLOR_WHITE " killed %s\n",
     killer,
     (int)( self - g_entities ),

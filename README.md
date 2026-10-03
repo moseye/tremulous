@@ -32,8 +32,10 @@ The launcher loads **Arachnid2**, adds **16 human and 16 alien bots**, and
 allocates **40 client slots**, leaving eight slots for people. Each team starts
 with two builders, two defenders and twelve attackers. Attackers assemble into
 groups and advance toward enemy spawns, with evolved aliens leading escorts.
-Squads use stable corridor preferences and avoid other squads' reserved paths.
-Waiting attackers can regroup locally when the original rally point is blocked.
+Nearby fighters form and reshape groups around current contacts. Outnumbered
+groups retreat toward reinforcements, while aliens converge for swarm attacks
+and can use checked local wall flanks. Groups prefer different safe corridors
+and avoid other groups' reserved paths. Bots also use occasional taunt gestures.
 Human aim has skill-dependent angular error, reaction time, turning speed and
 pauses between firing bursts.
 

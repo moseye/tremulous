@@ -3,7 +3,7 @@
 #include "g_bot.h"
 
 botState_t g_botStates[ MAX_CLIENTS ];
-vmCvar_t g_botThink, g_botSkill, g_botBuild, g_botDebug;
+vmCvar_t g_botThink, g_botSkill, g_botBuild, g_botDebug, g_botTaunt;
 static int botSerial;
 static int botFrameStart;
 static int botFirstTurn[ MAX_CLIENTS ], botPlanningTurn;
@@ -156,6 +156,7 @@ void G_BotInit( void )
   trap_Cvar_Register( &g_botSkill, "g_botSkill", "5", CVAR_ARCHIVE );
   trap_Cvar_Register( &g_botBuild, "g_botBuild", "1", CVAR_ARCHIVE );
   trap_Cvar_Register( &g_botDebug, "g_botDebug", "0", 0 );
+  trap_Cvar_Register( &g_botTaunt, "g_botTaunt", "1", CVAR_ARCHIVE );
   trap_AddCommand( "bot" );
   trap_AddCommand( "botnav" );
   G_BotNavInit( );
@@ -163,6 +164,7 @@ void G_BotInit( void )
   G_BotCombatInit( );
   G_BotTeamInit( );
   G_BotBenchmarkInit( );
+  G_BotProbeInit( );
 }
 
 void G_BotShutdown( void )
@@ -170,6 +172,7 @@ void G_BotShutdown( void )
   G_BotBenchmarkShutdown( );
   trap_RemoveCommand( "bot" );
   trap_RemoveCommand( "botnav" );
+  trap_RemoveCommand( "botprobe" );
 }
 
 void G_BotDisconnect( int clientNum )
@@ -248,18 +251,82 @@ static gentity_t *BotStrategicGoal( gentity_t *ent, botState_t *bot )
   return best;
 }
 
+/* Celebrate only an actual enemy player death. A pending celebration expires
+ * quickly; it never overrides healing, regrouping, shooting or climbing. */
+void G_BotCelebrateKill( gentity_t *victim, gentity_t *attacker )
+{
+  if( !victim || !victim->client || !attacker || !attacker->client ||
+      victim == attacker || !G_BotIsBot( attacker->s.number ) || attacker->health <= 0 ||
+      victim->client->pers.teamSelection == TEAM_NONE ||
+      victim->client->pers.teamSelection == attacker->client->pers.teamSelection ) return;
+  g_botStates[ attacker->s.number ].tauntPendingUntil = level.time + 8000;
+}
+
+void G_BotTauntEvent( gentity_t *ent )
+{
+  botState_t *bot;
+  if( !ent || !ent->client || !G_BotIsBot( ent->s.number ) ) return;
+  bot = &g_botStates[ ent->s.number ];
+  bot->taunts++; bot->lastTauntTime = level.time;
+  bot->tauntPendingUntil = 0;
+  bot->nextTaunt = level.time + 20000 +
+    ( ent->s.number * 7919 + ( bot->taunts % 65536 ) * 3571 ) % 20000;
+  G_BotBenchmarkTaunt( ent );
+}
+
+static void BotConsiderTaunt( gentity_t *ent, botState_t *bot, usercmd_t *cmd,
+                              qboolean busy )
+{
+  vec3_t threat, normal;
+  qboolean retreat;
+  int allies, enemies, i, friends = 0;
+  if( !g_botTaunt.integer || busy || bot->rallying ||
+      ent->health < ent->client->ps.stats[ STAT_MAX_HEALTH ] * 0.6f ||
+      ent->client->ps.tauntTimer || ent->client->ps.torsoTimer || ent->client->ps.weaponTime ||
+      ( ent->client->ps.stats[ STAT_STATE ] & SS_CHARGING ) ||
+      ( cmd->buttons & ( BUTTON_ATTACK | BUTTON_ATTACK2 | BUTTON_USE_HOLDABLE ) ) ) return;
+  if( ent->client->ps.eFlags & EF_WALLCLIMB )
+  {
+    BG_GetClientNormal( &ent->client->ps, normal );
+    if( normal[ 2 ] < 0.7f ) return;
+  }
+  if( !bot->nextTaunt ) bot->nextTaunt = level.time + 10000 + ent->s.number * 977 % 9000;
+  if( level.time < bot->nextTaunt ) return;
+  if( G_BotTeamCombatContext( ent, threat, &allies, &enemies, &retreat ) &&
+      ( retreat || enemies > 0 ) ) return;
+  if( bot->target >= 0 && bot->target < level.num_entities &&
+      g_entities[ bot->target ].inuse && g_entities[ bot->target ].health > 0 ) return;
+  if( bot->tauntPendingUntil <= level.time )
+  {
+    /* Occasional gestures during a quiet patrol, with teammates
+     * nearby. Stable per-client timing does not consume gameplay random draws. */
+    if( bot->role == BOT_BUILD || VectorLengthSquared( ent->client->ps.velocity ) > 80.0f * 80.0f ) return;
+    for( i = 0; i < level.maxclients; i++ )
+      if( i != ent->s.number && g_entities[ i ].inuse && g_entities[ i ].client &&
+          g_entities[ i ].health > 0 && level.clients[ i ].sess.spectatorState == SPECTATOR_NOT &&
+          level.clients[ i ].pers.teamSelection == bot->team &&
+          DistanceSquared( ent->client->ps.origin, level.clients[ i ].ps.origin ) < 400.0f * 400.0f ) friends++;
+    if( !friends ) return;
+  }
+  cmd->buttons |= BUTTON_GESTURE;
+  /* An accepted Pmove event sets the real cooldown. Retry a refused gesture
+   * at most once a second, rather than counting a requested button as a taunt. */
+  bot->nextTaunt = level.time + 1000;
+}
+
 void G_BotFrame( void )
 {
-  int i, j, visited, first = -1;
+  int i, j, visited, first = -1, wallAllies, wallEnemies;
   gentity_t *ent, *goal, *service;
-  vec3_t servicePoint, teamGoal;
+  vec3_t servicePoint, teamGoal, wallGoal;
   botState_t *bot;
   usercmd_t *cmd;
-  qboolean retreat, wasRallying;
+  qboolean retreat, wasRallying, wallRetreat;
   trap_Cvar_Update( &g_botThink );
   trap_Cvar_Update( &g_botSkill );
   trap_Cvar_Update( &g_botBuild );
   trap_Cvar_Update( &g_botDebug );
+  trap_Cvar_Update( &g_botTaunt );
   G_BotNavFrame( );
   G_BotBuildFrame( );
   G_BotCombatFrame( );
@@ -313,6 +380,7 @@ void G_BotFrame( void )
           G_PushSpawnQueue( bot->team == TEAM_ALIENS ? &level.alienSpawnQueue :
                             &level.humanSpawnQueue, i );
           bot->spawnCount++;
+          bot->tauntPendingUntil = 0;
           bot->target = -1;
           G_BotNavReset( i );
         }
@@ -320,6 +388,13 @@ void G_BotFrame( void )
       }
     }
     else if( ent->health <= 0 ) memset( cmd, 0, sizeof( *cmd ) );
+    else if( G_BotProbePaused( i ) )
+    {
+      memset( cmd, 0, sizeof( *cmd ) );
+      for( j = 0; j < 3; j++ ) cmd->angles[ j ] = ANGLE2SHORT( ent->client->ps.viewangles[ j ] ) -
+                                                 ent->client->ps.delta_angles[ j ];
+      cmd->weapon = ent->client->ps.weapon;
+    }
     else if( level.time >= bot->nextThink )
     {
       if( i == first ) botFirstTurn[ i ] = ++botPlanningTurn;
@@ -329,10 +404,15 @@ void G_BotFrame( void )
                           ent->client->ps.delta_angles[ j ];
       cmd->weapon = ent->client->ps.weapon;
       ent->client->ps.stats[ STAT_BUILDABLE ] = BA_NONE;
+      bot->wallSuppressed = qtrue;
       service = G_BotEconomyThink( ent, bot );
       retreat = G_BotCombatRetreat( ent, bot, cmd );
       wasRallying = bot->rallying;
-      bot->rallying = !retreat && !service && G_BotTeamRally( ent, bot, teamGoal );
+      bot->rallying = !retreat && G_BotTeamRally( ent, bot, teamGoal );
+      /* A current numerical disadvantage takes priority over shopping or
+       * refilling. Emergency health retreat retains its own safe destination. */
+      if( bot->rallying ) service = NULL;
+      bot->wallSuppressed = retreat || service != NULL || bot->rallying;
       if( wasRallying != bot->rallying ) G_BotNavClearRoute( i );
       if( !retreat && !G_BotCombatThink( ent, bot, cmd ) )
       {
@@ -384,10 +464,23 @@ void G_BotFrame( void )
           G_BotNavMove( ent, bot, teamGoal, cmd, qfalse );
         else G_BotNavClearRoute( i );
       }
+      if( !retreat && !service && !bot->rallying && bot->team == TEAM_ALIENS &&
+          !( ent->client->ps.stats[ STAT_STATE ] & SS_CHARGING ) &&
+          !( cmd->buttons & BUTTON_ATTACK2 ) )
+      {
+        if( G_BotTeamCombatContext( ent, wallGoal, &wallAllies, &wallEnemies, &wallRetreat ) )
+        {
+          if( !wallRetreat ) G_BotNavWallMove( ent, bot, wallGoal, cmd, qfalse );
+        }
+        else if( bot->moveGoalTime >= level.time - 1000 )
+          G_BotNavWallMove( ent, bot, bot->moveGoal, cmd, qfalse );
+      }
       G_BotNavSafeMove( ent, cmd );
+      BotConsiderTaunt( ent, bot, cmd, retreat || service != NULL );
       bot->nextThink = level.time + BotClamp( g_botThink.integer, 25, 250 );
     }
     cmd->serverTime = level.time;
+    G_BotProbeUsercmd( i, cmd );
     trap_BotSetUsercmd( i, cmd );
     ent->client->pers.cmd = *cmd;
     ent->client->lastCmdTime = level.time;
@@ -495,10 +588,10 @@ static void BotHelp( void )
     "  bot skill <id|name|all> <1-10|bell>\n"
     "  bot role <id|name|all> <attack|defend|build>\n"
     "  bot team <id|name> <humans|aliens|spectator>\n"
-    "  bot list; bot buildings; bot tactics; botnav help\n"
+    "  bot list; bot buildings; bot tactics [id]; botnav help\n"
     "bell: balanced, shuffled skills centered at 5.5; fill redistributes the whole team.\n"
     "Cvars: g_botThink (25-250 ms), g_botSkill (default), g_botBuild (0/1), g_botDebug\n"
-    "  g_botCombatTuning, g_botTeamwork, g_botSpawnScale, g_botNavTuning (0/1)\n"
+    "  g_botCombatTuning, g_botTeamwork, g_botSpawnScale, g_botNavTuning, g_botTaunt (0/1)\n"
     "  g_botHumanAimCone, g_botHumanReaction, g_botHumanTurnSpeed, g_botHumanFireDelay\n" );
 }
 
@@ -512,6 +605,7 @@ qboolean G_BotConsoleCommand( void )
   qboolean all, bell = qfalse;
   trap_Argv( 0, command, sizeof( command ) );
   if( !Q_stricmp( command, "botbench" ) ) return G_BotBenchmarkConsoleCommand( );
+  if( !Q_stricmp( command, "botprobe" ) ) return G_BotProbeConsoleCommand( );
   if( !Q_stricmp( command, "botnav" ) ) return G_BotNavConsoleCommand( command );
   if( Q_stricmp( command, "bot" ) ) return qfalse;
   trap_Argv( 1, action, sizeof( action ) );
@@ -520,14 +614,23 @@ qboolean G_BotConsoleCommand( void )
   if( !Q_stricmp( action, "tactics" ) )
   {
     int waves, rallied, dispatches, focus, members, peak, orders, active;
+    char tactics[ 2048 ];
+    if( argc == 3 )
+    {
+      if( !BotNumber( arg, 0, level.maxclients - 1, &id ) || !G_BotIsBot( id ) )
+      { G_Printf( "bot tactics: supply a connected bot ID from bot list\n" ); return qtrue; }
+      G_BotTeamDebugJSON( &g_entities[ id ], tactics, sizeof( tactics ) );
+      G_Printf( "%s: %s\n", level.clients[ id ].pers.netname, tactics );
+      return qtrue;
+    }
     G_Printf( "bot tactics: teamwork %d combat tuning %d spawn scaling %d\n",
               g_botTeamwork.integer, g_botCombatTuning.integer, g_botSpawnScale.integer );
     for( i = TEAM_ALIENS; i <= TEAM_HUMANS; i++ )
     {
       G_BotTeamMetrics( i, &waves, &rallied, &dispatches, &focus );
       G_BotTeamCohortMetrics( i, &members, &peak, &orders, &active );
-      G_Printf( "%s: waves %d launched %d peak group %d active %d rallying %d "
-                "advance orders %d defense dispatches %d focus %d desired spawns %d queued %d\n",
+      G_Printf( "%s: formations %d membership changes %d peak group %d attackers %d regrouping %d "
+                "tactical orders %d withdrawals %d focus %d desired spawns %d queued %d\n",
         BG_TeamName( i ), waves, members, peak, active, rallied, orders, dispatches, focus,
         G_BotBuildDemand( i ), G_GetSpawnQueueLength( i == TEAM_HUMANS ?
           &level.humanSpawnQueue : &level.alienSpawnQueue ) );
@@ -554,11 +657,11 @@ qboolean G_BotConsoleCommand( void )
           level.clients[ i ].pers.netname, BG_TeamName( g_botStates[ i ].team ),
           g_botStates[ i ].skill, BotRoleName( g_botStates[ i ].role ),
           level.clients[ i ].sess.spectatorState == SPECTATOR_NOT ? "alive" : "queued" );
-        if( g_botDebug.integer ) G_Printf( "  hp %d class %d weapon %d credits %d pos %.0f %.0f %.0f target %d\n",
+        if( g_botDebug.integer ) G_Printf( "  hp %d class %d weapon %d credits %d pos %.0f %.0f %.0f target %d taunts %d\n",
           g_entities[ i ].health, level.clients[ i ].ps.stats[ STAT_CLASS ],
           level.clients[ i ].ps.weapon, level.clients[ i ].pers.credit,
           level.clients[ i ].ps.origin[ 0 ], level.clients[ i ].ps.origin[ 1 ],
-          level.clients[ i ].ps.origin[ 2 ], g_botStates[ i ].target );
+          level.clients[ i ].ps.origin[ 2 ], g_botStates[ i ].target, g_botStates[ i ].taunts );
       }
     G_BotNavStatus( ); return qtrue;
   }

@@ -4,7 +4,7 @@
 
 typedef struct
 {
-  int kills, deaths, shots, damageEvents, playerDamage, buildingDamage;
+  int kills, deaths, shots, damageEvents, playerDamage, buildingDamage, taunts;
   int defenseKills, defensePlayerDamage, defenseBuildingDamage;
   int spawns, builds, spawnBuilds, firstSpawnBuild, peakQueue;
   unsigned int aliveMsec, queuedMsec;
@@ -21,6 +21,7 @@ static char benchMap[ MAX_QPATH ];
 static botBenchTeam_t benchTeams[ NUM_TEAMS ];
 static unsigned int benchSpawnGeneration[ MAX_CLIENTS ];
 static vmCvar_t benchSampleMsec;
+static int benchEventActor = -1;
 
 /* Observation cadence only: server and Pmove ticks retain their normal timing.
  * A generation changes only at the physical buildable-spawn hook below, so
@@ -118,7 +119,7 @@ static void BotBenchTeamJSON( team_t team, char *out, int size )
   Com_sprintf( out, size,
     "{\"bots\":%d,\"alive\":%d,\"queued\":%d,\"builders\":%d,"
     "\"skill_histogram\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d],"
-    "\"kills\":%d,\"deaths\":%d,\"shots\":%d,\"damage_events\":%d,"
+    "\"kills\":%d,\"deaths\":%d,\"shots\":%d,\"damage_events\":%d,\"taunts_accepted\":%d,"
     "\"player_damage\":%d,\"building_damage\":%d,\"spawn_count\":%d,"
     "\"defense_kills\":%d,\"defense_player_damage\":%d,\"defense_building_damage\":%d,"
     "\"builds\":%d,\"spawn_builds\":%d,\"first_spawn_build_ms\":%d,"
@@ -134,7 +135,7 @@ static void BotBenchTeamJSON( team_t team, char *out, int size )
     bots, alive, queued, builders,
     skill[ 0 ], skill[ 1 ], skill[ 2 ], skill[ 3 ], skill[ 4 ],
     skill[ 5 ], skill[ 6 ], skill[ 7 ], skill[ 8 ], skill[ 9 ],
-    stats->kills, stats->deaths, stats->shots, stats->damageEvents,
+    stats->kills, stats->deaths, stats->shots, stats->damageEvents, stats->taunts,
     stats->playerDamage, stats->buildingDamage, stats->spawns,
     stats->defenseKills, stats->defensePlayerDamage, stats->defenseBuildingDamage,
     stats->builds, stats->spawnBuilds, stats->firstSpawnBuild,
@@ -155,7 +156,7 @@ static void BotBenchTeamJSON( team_t team, char *out, int size )
 static void BotBenchSnapshot( char *out, int size )
 {
   int i, count = 0, structures = 0;
-  char item[ 2560 ], navigation[ 1024 ];
+  static char item[ 8192 ], navigation[ 2048 ], tactics[ 2048 ];
   gentity_t *ent;
   botState_t *bot;
   Q_strcat( out, size, ",\"snapshot\":{\"bots\":[" );
@@ -164,6 +165,7 @@ static void BotBenchSnapshot( char *out, int size )
     ent = &g_entities[ i ]; bot = &g_botStates[ i ];
     if( !G_BotIsBot( i ) || ent->client->pers.connected != CON_CONNECTED ) continue;
     G_BotNavDebugJSON( ent, navigation, sizeof( navigation ) );
+    G_BotTeamDebugJSON( ent, tactics, sizeof( tactics ) );
     Com_sprintf( item, sizeof( item ),
       "%s{\"id\":%d,\"team\":%d,\"role\":%d,\"skill\":%d,\"health\":%d,"
       "\"spectator\":%d,\"class\":%d,\"weapon\":%d,\"credits\":%d,\"target\":%d,"
@@ -172,10 +174,14 @@ static void BotBenchSnapshot( char *out, int size )
       "\"move_goal\":[%.1f,%.1f,%.1f],\"move_goal_age_ms\":%d,"
       "\"buttons\":%d,\"forwardmove\":%d,\"rightmove\":%d,\"upmove\":%d,"
       "\"weapon_state\":%d,\"weapon_time\":%d,"
+      "\"taunts_accepted\":%d,\"last_taunt_age_ms\":%d,\"next_taunt_ms\":%d,"
+      "\"taunt_pending_ms\":%d,\"taunt_timer_ms\":%d,\"torso_timer_ms\":%d,"
+      "\"torso_animation\":%d,\"legs_animation\":%d,\"event_sequence\":%d,"
+      "\"event_ring\":[%d,%d],"
       "\"charge\":%d,\"pm_flags\":%d,\"ground_entity\":%d,\"state\":%d,"
       "\"mins\":[%.1f,%.1f,%.1f],\"maxs\":[%.1f,%.1f,%.1f],"
       "\"grapple_point\":[%.1f,%.1f,%.1f],"
-      "\"viewangles\":[%.1f,%.1f,%.1f],\"navigation\":%s}",
+      "\"viewangles\":[%.1f,%.1f,%.1f],\"navigation\":%s,\"tactics\":%s}",
       count++ ? "," : "", i, bot->team, bot->role, bot->skill, ent->health,
       ent->client->sess.spectatorState, ent->client->ps.stats[ STAT_CLASS ],
       ent->client->ps.weapon, ent->client->pers.credit, bot->target,
@@ -186,13 +192,18 @@ static void BotBenchSnapshot( char *out, int size )
       level.time - bot->moveGoalTime, bot->cmd.buttons,
       bot->cmd.forwardmove, bot->cmd.rightmove, bot->cmd.upmove,
       ent->client->ps.weaponstate, ent->client->ps.weaponTime,
+      bot->taunts, bot->lastTauntTime ? level.time - bot->lastTauntTime : -1,
+      MAX( 0, bot->nextTaunt - level.time ), MAX( 0, bot->tauntPendingUntil - level.time ),
+      ent->client->ps.tauntTimer, ent->client->ps.torsoTimer,
+      ent->client->ps.torsoAnim, ent->client->ps.legsAnim, ent->client->ps.eventSequence,
+      ent->client->ps.events[ 0 ], ent->client->ps.events[ 1 ],
       ent->client->ps.stats[ STAT_MISC ], ent->client->ps.pm_flags,
       ent->client->ps.groundEntityNum, ent->client->ps.stats[ STAT_STATE ],
       ent->r.mins[ 0 ], ent->r.mins[ 1 ], ent->r.mins[ 2 ],
       ent->r.maxs[ 0 ], ent->r.maxs[ 1 ], ent->r.maxs[ 2 ],
       ent->client->ps.grapplePoint[ 0 ], ent->client->ps.grapplePoint[ 1 ], ent->client->ps.grapplePoint[ 2 ],
       ent->client->ps.viewangles[ 0 ], ent->client->ps.viewangles[ 1 ], ent->client->ps.viewangles[ 2 ],
-      navigation );
+      navigation, tactics );
     Q_strcat( out, size, item );
   }
   Q_strcat( out, size, "],\"structures\":[" );
@@ -216,7 +227,7 @@ static void BotBenchSnapshot( char *out, int size )
 
 static void BotBenchRecord( const char *event, const char *winner, const char *reason )
 {
-  static char line[ 131072 ], humans[ 3072 ], aliens[ 3072 ];
+  static char line[ 262144 ], humans[ 3072 ], aliens[ 3072 ];
   int length;
   int nodes, links, expanded, plans, routes;
   int components, largest, basesConnected;
@@ -237,8 +248,10 @@ static void BotBenchRecord( const char *event, const char *winner, const char *r
     "{\"schema\":1,\"event\":\"%s\",\"map\":\"%s\",\"seed\":%d,"
     "\"elapsed_ms\":%d,\"wall_elapsed_ms\":%d,\"winner\":\"%s\",\"reason\":\"%s\","
     "\"frames\":%d,\"min_step_ms\":%d,\"max_step_ms\":%d,\"sample_interval_ms\":%d,"
+    "\"event_actor\":%d,\"fixture_mode\":%d,"
     "\"configuration\":{\"combat_tuning\":%d,\"teamwork\":%d,\"spawn_scale\":%d,"
-    "\"nav_tuning\":%d,\"nav_node_limit\":%d},"
+    "\"nav_tuning\":%d,\"nav_node_limit\":%d,\"teamwork_mode\":\"dynamic_nearby\","
+    "\"probe_enabled\":%d,\"taunts_enabled\":%d},"
     "\"humans\":%s,\"aliens\":%s,"
     "\"nav\":{\"nodes\":%d,\"links\":%d,\"expanded\":%d,\"plans\":%d,\"routes\":%d,"
     "\"components\":%d,\"largest_component\":%d,\"bases_connected\":%d,"
@@ -252,9 +265,11 @@ static void BotBenchRecord( const char *event, const char *winner, const char *r
     event, benchMap, benchSeed, level.time - benchStart,
     trap_Milliseconds( ) - benchWallStart, winner, reason,
     benchFrames, benchMinStep, benchMaxStep, benchSampleInterval,
+    benchEventActor, trap_Cvar_VariableIntegerValue( "g_botProbe" ),
     g_botCombatTuning.integer, g_botTeamwork.integer, g_botSpawnScale.integer,
     trap_Cvar_VariableIntegerValue( "g_botNavTuning" ),
-    trap_Cvar_VariableIntegerValue( "g_botNavNodes" ), humans, aliens,
+    trap_Cvar_VariableIntegerValue( "g_botNavNodes" ),
+    trap_Cvar_VariableIntegerValue( "g_botProbe" ), g_botTaunt.integer, humans, aliens,
     nodes, links, expanded, plans, routes, components, largest, basesConnected,
     fallbacks, failures, stuckEscapes, classNodes, classLinks, classRejected, classDeferred,
     ascentChecks, ascentPassed, ascentRejected, ascentDeferred,
@@ -513,5 +528,21 @@ void G_BotBenchmarkConstruct( gentity_t *builder, gentity_t *built )
   {
     stats->spawnBuilds++;
     if( stats->firstSpawnBuild < 0 ) stats->firstSpawnBuild = level.time - benchStart;
+  }
+}
+
+/* Called only after Pmove emits EV_TAUNT. A requested gesture button is not
+ * counted as an accepted animation; timers and the event ring are captured
+ * immediately so coarse sampling cannot lose the accepted transition. */
+void G_BotBenchmarkTaunt( gentity_t *ent )
+{
+  botBenchTeam_t *stats = BotBenchTeam( ent );
+  if( !stats ) return;
+  stats->taunts++;
+  if( trap_Cvar_VariableIntegerValue( "g_botBenchmarkDetails" ) )
+  {
+    benchEventActor = ent->s.number;
+    BotBenchRecord( "taunt", "running", "" );
+    benchEventActor = -1;
   }
 }

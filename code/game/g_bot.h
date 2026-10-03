@@ -18,16 +18,18 @@ typedef struct
   int nextShotTime;
   int aimTime;
   qboolean rallying;
+  qboolean wallSuppressed;
   vec3_t moveGoal;
   int moveGoalTime;
   int spawnCount;
+  int nextTaunt, tauntPendingUntil, taunts, lastTauntTime;
   vec3_t lastOrigin;
   int stuckTime;
   usercmd_t cmd;
 } botState_t;
 
 extern botState_t g_botStates[ MAX_CLIENTS ];
-extern vmCvar_t g_botThink, g_botSkill, g_botBuild, g_botDebug;
+extern vmCvar_t g_botThink, g_botSkill, g_botBuild, g_botDebug, g_botTaunt;
 extern vmCvar_t g_botCombatTuning, g_botSpawnScale, g_botTeamwork;
 
 void G_BotInit( void );
@@ -38,12 +40,20 @@ int G_BotFillTeam( team_t team, int wanted, int skill, qboolean bell );
 qboolean G_BotConsoleCommand( void );
 qboolean G_BotIsBot( int clientNum );
 void G_BotAim( gentity_t *ent, usercmd_t *cmd, const vec3_t point );
+void G_BotCelebrateKill( gentity_t *victim, gentity_t *attacker );
+void G_BotTauntEvent( gentity_t *ent );
+void G_BotProbeInit( void );
+qboolean G_BotProbePaused( int clientNum );
+qboolean G_BotProbeConsoleCommand( void );
+void G_BotProbeUsercmd( int clientNum, usercmd_t *cmd );
 gentity_t *G_BotFindBuildable( gentity_t *ent, buildable_t type, float range );
 
 void G_BotNavInit( void );
 void G_BotNavFrame( void );
 void G_BotNavMove( gentity_t *ent, botState_t *bot, const vec3_t goal,
                    usercmd_t *cmd, qboolean faceGoal );
+qboolean G_BotNavWallMove( gentity_t *ent, botState_t *bot, const vec3_t goal,
+                           usercmd_t *cmd, qboolean faceGoal );
 void G_BotNavReset( int clientNum );
 void G_BotNavClearRoute( int clientNum );
 void G_BotNavStatus( void );
@@ -92,8 +102,11 @@ void G_BotTeamMetrics( team_t team, int *waves, int *rallied, int *dispatches, i
 void G_BotTeamCohortMetrics( team_t team, int *launchedMembers, int *peakGroup,
                             int *advanceOrders, int *activeMembers );
 void G_BotTeamProgressMetrics( team_t team, int *renewals, int *recalls );
-/* Stable squad identity for route preferences; no enemy information. */
+/* Current nearby group identity for route preferences; no enemy information. */
 int G_BotTeamRouteGroup( gentity_t *ent );
+qboolean G_BotTeamCombatContext( gentity_t *ent, vec3_t threat,
+                                 int *allies, int *enemies, qboolean *retreat );
+void G_BotTeamDebugJSON( gentity_t *ent, char *out, int size );
 
 void G_BotBenchmarkInit( void );
 void G_BotBenchmarkShutdown( void );
@@ -104,5 +117,6 @@ void G_BotBenchmarkDeath( gentity_t *victim, gentity_t *attacker );
 void G_BotBenchmarkDamage( gentity_t *target, gentity_t *attacker, int damage );
 void G_BotBenchmarkShot( gentity_t *ent, int mode );
 void G_BotBenchmarkConstruct( gentity_t *builder, gentity_t *built );
+void G_BotBenchmarkTaunt( gentity_t *ent );
 
 #endif

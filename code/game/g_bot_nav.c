@@ -7,7 +7,8 @@
  * The floor graph grows a few trace-tested edges each frame. Buildings and
  * players are excluded from generation and handled by class-sized local traces.
  * Moving platforms, teleporters and arbitrary wall/ceiling routes require map
- * hints or a more specialized surface planner; wall climbing is a local escape.
+ * hints or a more specialized surface planner. Wall climbers also use bounded,
+ * collision-proved local flanks with an ordinary supported floor exit.
  */
 #include "g_local.h"
 #include "g_bot.h"
@@ -29,6 +30,7 @@
 #define BOT_NAV_MOVER_RETRIES 512
 #define BOT_NAV_MOVER_ATTEMPTS 4
 #define BOT_NAV_EXPAND_RESERVE 68
+#define BOT_NAV_WALL_PLAN_TRACES 64
 #define BOT_NAV_MASK        ( CONTENTS_SOLID | CONTENTS_PLAYERCLIP )
 #define BOT_NAV_JUMP        1
 #define BOT_NAV_INFINITY    1.0e30f
@@ -71,6 +73,13 @@ typedef struct
   int safetyTime, safetyReason;
   vec3_t safetyPoint;
   vec3_t goal, lastOrigin, yieldDirection;
+  int wallPhase, wallClass, wallStarted, wallDeadline, wallNextTry, wallCandidate;
+  int wallMoveTime, wallApproaches, wallAttachments, wallCrawlOrders;
+  int wallCompleted, wallAborted, wallObservedTime, wallReaims, wallReaimTime;
+  float wallTravel, wallPlanTravelStart;
+  qboolean wallOrder, wallOrderClimb, wallOrderDetach, wallObservedAttached;
+  vec3_t wallEntry, wallCrawl, wallExit, wallNormal, wallGoal;
+  vec3_t wallDirection, wallObservedOrigin;
 } botNavClient_t;
 
 typedef struct
@@ -133,6 +142,7 @@ static int navPlans, navRoutes;
 static int navFallbacks, navFailures, navStuckEscapes, navSeedClient;
 static int navClassTraces, navClassNodes, navClassLinks, navClassRejected, navClassDeferred;
 static int navAscentChecks, navAscentPassed, navAscentRejected, navAscentDeferred;
+static int navWallPlanTraces;
 static float navClassGravity;
 static vmCvar_t navNodeLimit, navTuning;
 static int navLimit;
@@ -200,7 +210,10 @@ void G_BotNavDebugJSON( gentity_t *ent, char *out, int size )
     "\"world_fraction\":%.3f,\"world_startsolid\":%d,\"world_hit\":%d,"
     "\"step_fraction\":%.3f,\"body_fraction\":%.3f,\"body_startsolid\":%d,\"body_hit\":%d,"
     "\"route_group\":%d,\"route_variant\":%d,\"route_epoch\":%d,\"crowd_yields\":%d,"
-    "\"movement_fraction\":%.3f,\"movement_blocker\":%d,\"movement_age_ms\":%d,\"movement_reason\":%d}",
+    "\"movement_fraction\":%.3f,\"movement_blocker\":%d,\"movement_age_ms\":%d,\"movement_reason\":%d,"
+    "\"wall_phase\":%d,\"wall_plan_age_ms\":%d,\"wall_approaches\":%d,\"wall_attachments\":%d,"
+    "\"wall_crawl_orders\":%d,\"wall_completed\":%d,\"wall_aborted\":%d,\"wall_reaims\":%d,\"wall_travel_units\":%.1f,"
+    "\"wall_entry\":[%.1f,%.1f,%.1f],\"wall_crawl\":[%.1f,%.1f,%.1f],\"wall_exit\":[%.1f,%.1f,%.1f]}",
     client->cursor, client->length, client->partial, client->planFrom, client->planTo, node,
     waypoint[ 0 ], waypoint[ 1 ], waypoint[ 2 ], client->avoidNode,
     MAX( 0, client->avoidUntil - level.time ),
@@ -210,7 +223,13 @@ void G_BotNavDebugJSON( gentity_t *ent, char *out, int size )
     bodies.fraction, bodies.startsolid, bodies.entityNum,
     client->routeGroup, client->routeVariant, client->routeEpoch, client->crowdYields,
     client->movementFraction, client->movementBlocker,
-    client->movementTime ? level.time - client->movementTime : -1, client->movementReason );
+    client->movementTime ? level.time - client->movementTime : -1, client->movementReason,
+    client->wallPhase, client->wallPhase ? level.time - client->wallStarted : -1,
+    client->wallApproaches, client->wallAttachments, client->wallCrawlOrders,
+    client->wallCompleted, client->wallAborted, client->wallReaims, client->wallTravel,
+    client->wallEntry[ 0 ], client->wallEntry[ 1 ], client->wallEntry[ 2 ],
+    client->wallCrawl[ 0 ], client->wallCrawl[ 1 ], client->wallCrawl[ 2 ],
+    client->wallExit[ 0 ], client->wallExit[ 1 ], client->wallExit[ 2 ] );
 }
 
 static qboolean BotNavMoverHit( const trace_t *trace )
@@ -1287,7 +1306,7 @@ static int BotNavAnchorForClass( const vec3_t point, class_t classNum,
  * abandoned paths, deaths and respawns cannot leave permanent reservations. */
 static void BotNavTraffic( gentity_t *ent, botNavClient_t *client )
 {
-  int i, j, node, limit;
+  int i, j, node, limit, group = G_BotTeamRouteGroup( ent );
   botNavClient_t *other;
   memset( navTraffic, 0, navNodeCount * sizeof( navTraffic[ 0 ] ) );
   for( i = 0; i < level.maxclients; i++ )
@@ -1297,7 +1316,7 @@ static void BotNavTraffic( gentity_t *ent, botNavClient_t *client )
         level.clients[ i ].pers.teamSelection != ent->client->pers.teamSelection ||
         level.time - g_botStates[ i ].moveGoalTime > 3000 ) continue;
     other = &navClients[ i ];
-    if( client->routeGroup > 0 && G_BotTeamRouteGroup( &g_entities[ i ] ) == client->routeGroup ) continue;
+    if( group > 0 && G_BotTeamRouteGroup( &g_entities[ i ] ) == group ) continue;
     limit = MIN( other->length, other->cursor + 32 );
     for( j = other->cursor; j < limit; j++ )
     {
@@ -1571,6 +1590,7 @@ void G_BotNavInit( void )
   navFallbacks = navFailures = navStuckEscapes = navSeedClient = 0;
   navClassTraces = navClassNodes = navClassLinks = navClassRejected = navClassDeferred = 0;
   navAscentChecks = navAscentPassed = navAscentRejected = navAscentDeferred = 0;
+  navWallPlanTraces = 0;
   memset( navAnchorRetries, 0, sizeof( navAnchorRetries ) );
   memset( navConnectors, 0, sizeof( navConnectors ) );
   memset( navStepRejects, 0, sizeof( navStepRejects ) );
@@ -1607,6 +1627,7 @@ void G_BotNavFrame( void )
   trap_Cvar_Update( &navTuning );
   navTraces = 0;
   navClassTraces = 0;
+  navWallPlanTraces = 0;
   if( fabs( navClassGravity - g_gravity.value ) > 0.001f )
   {
     memset( navConnectors, 0, sizeof( navConnectors ) );
@@ -1954,6 +1975,352 @@ static qboolean BotNavSurfaceEscape( gentity_t *ent, const vec3_t normal,
   return qtrue;
 }
 
++/* Local wall routes are short tactical alternatives to the floor lane. They
+ * contain only static geometry and the goal already known to the caller. A
+ * surface is useful only when the actor can reach it, stay attached along it,
+ * and return to a full-hull, hazard-free floor landing within an ordinary drop. */
+static void BotNavWallTrace( trace_t *tr, gentity_t *ent, const vec3_t start,
+                             const vec3_t mins, const vec3_t maxs,
+                             const vec3_t end, qboolean planning )
+{
+  BotNavTrace( tr, start, mins, maxs, end, ent->s.number, MASK_PLAYERSOLID );
+  if( planning ) navWallPlanTraces++;
+}
+
+static qboolean BotNavWallHazard( gentity_t *ent, const vec3_t origin )
+{
+  vec3_t feet;
+  VectorCopy( origin, feet ); feet[ 2 ] += ent->r.mins[ 2 ];
+  return BotNavHazard( feet, MAX( ent->r.maxs[ 0 ], ent->r.maxs[ 1 ] ),
+                       ent->r.maxs[ 2 ] - ent->r.mins[ 2 ] );
+}
+
+static qboolean BotNavWallTouch( gentity_t *ent, const vec3_t point,
+                                 const vec3_t normal, qboolean planning )
+{
+  vec3_t start, end;
+  trace_t tr;
+  if( BotNavWallHazard( ent, point ) ) return qfalse;
+  VectorMA( point, 1.0f, normal, start );
+  VectorMA( point, -6.0f, normal, end );
+  BotNavWallTrace( &tr, ent, start, ent->r.mins, ent->r.maxs, end, planning );
+  return !tr.startsolid && !tr.allsolid && tr.fraction < 1.0f &&
+         tr.entityNum == ENTITYNUM_WORLD && !( tr.surfaceFlags & ( SURF_SKY | SURF_SLICK ) ) &&
+         fabs( tr.plane.normal[ 2 ] ) < 0.3f && DotProduct( tr.plane.normal, normal ) > 0.9f;
+}
+
+static qboolean BotNavWallLanding( gentity_t *ent, const vec3_t surface,
+                                   const vec3_t normal, vec3_t landing,
+                                   qboolean planning )
+{
+  vec3_t start, end, feet, mins, maxs, sample;
+  trace_t tr;
+  float drop;
+  int i, steps;
+  /* Use the actual vertical column, rather than a floor several body widths
+   * away. Releasing hold-to-climb must itself have a safe gravity landing. */
+  VectorMA( surface, 1.0f, normal, start );
+  VectorCopy( start, feet ); feet[ 2 ] += ent->r.mins[ 2 ];
+  VectorCopy( ent->r.mins, mins ); VectorCopy( ent->r.maxs, maxs );
+  mins[ 2 ] = maxs[ 2 ] = 0.0f;
+  VectorCopy( feet, end ); end[ 2 ] -= 96.125f;
+  BotNavWallTrace( &tr, ent, feet, mins, maxs, end, planning );
+  if( tr.startsolid || tr.allsolid || tr.fraction == 1.0f ||
+      tr.entityNum != ENTITYNUM_WORLD || tr.plane.normal[ 2 ] < 0.7f ||
+      ( tr.surfaceFlags & SURF_SKY ) ) return qfalse;
+  VectorCopy( tr.endpos, landing );
+  landing[ 2 ] += 1.0f - ent->r.mins[ 2 ];
+  drop = start[ 2 ] - landing[ 2 ];
+  if( drop < -18.0f || drop > 96.125f ) return qfalse;
+  BotNavWallTrace( &tr, ent, start, ent->r.mins, ent->r.maxs, landing, planning );
+  if( !BotNavClassClear( &tr ) ) return qfalse;
+  BotNavWallTrace( &tr, ent, landing, ent->r.mins, ent->r.maxs, landing, planning );
+  if( !BotNavClassClear( &tr ) ) return qfalse;
+  steps = MAX( 1, (int)( fabs( drop ) / 24.0f ) + 1 );
+  for( i = 0; i <= steps; i++ )
+  {
+    VectorSubtract( landing, start, sample );
+    VectorMA( start, (float)i / steps, sample, sample );
+    if( BotNavWallHazard( ent, sample ) ) return qfalse;
+  }
+  return qtrue;
+}
+
+static qboolean BotNavWallSupportedApproach( gentity_t *ent )
+{
+  int i, index, checks = 0;
+  gentity_t *other;
+  trace_t tr;
+  vec3_t eye, point;
+  BG_GetClientViewOrigin( &ent->client->ps, eye );
+  for( i = 0; i < level.maxclients; i++ )
+  {
+    index = ( ent->s.number + level.time / 500 + i ) % level.maxclients;
+    other = &g_entities[ index ];
+    if( other == ent || !other->inuse || !other->client || other->health <= 0 ||
+        other->client->pers.connected != CON_CONNECTED ||
+        other->client->sess.spectatorState != SPECTATOR_NOT ||
+        other->client->pers.teamSelection != ent->client->pers.teamSelection ||
+        ( G_BotIsBot( index ) && g_botStates[ index ].role == BOT_BUILD ) ||
+        DistanceSquared( ent->client->ps.origin, other->client->ps.origin ) > 450.0f * 450.0f ) continue;
+    BG_GetClientViewOrigin( &other->client->ps, point );
+    trap_Trace( &tr, eye, NULL, NULL, point, ent->s.number, MASK_SHOT );
+    if( tr.fraction == 1.0f || tr.entityNum == index ) return qtrue;
+    if( ++checks >= 4 ) break;
+  }
+  return qfalse;
+}
+
+static qboolean BotNavWallPlan( gentity_t *ent, botState_t *bot, botNavClient_t *client,
+                                const vec3_t goal, qboolean attached, const vec3_t normal )
+{
+  vec3_t toward, side, probe, entry, crawl, along, wallNormal, sample, landing, delta;
+  trace_t tr;
+  float distance, sign, progress, fraction;
+  int candidate, steps, i, before;
+  if( navWallPlanTraces > BOT_NAV_WALL_PLAN_TRACES - 48 ) return qfalse;
+  VectorSubtract( goal, ent->client->ps.origin, toward ); toward[ 2 ] = 0.0f;
+  if( VectorNormalize( toward ) < 0.01f ||
+      DistanceSquared( goal, ent->client->ps.origin ) < 128.0f * 128.0f ) return qfalse;
+  client->wallNextTry = level.time + 400;
+  candidate = ( client->wallCandidate++ + ent->s.number + client->routeVariant ) & 3;
+  if( attached )
+  {
+    if( fabs( normal[ 2 ] ) >= 0.3f ) return qfalse;
+    VectorCopy( normal, wallNormal );
+    VectorCopy( ent->client->ps.origin, entry );
+  }
+  else
+  {
+    if( ent->client->ps.groundEntityNum != ENTITYNUM_WORLD ) return qfalse;
+    sign = ( candidate & 1 ) ? -1.0f : 1.0f;
+    VectorSet( side, -toward[ 1 ] * sign, toward[ 0 ] * sign, 0 );
+    VectorMA( side, candidate >= 2 ? 0.65f : 0.0f, toward, probe );
+    VectorNormalize( probe );
+    VectorMA( ent->client->ps.origin, 56.0f, probe, sample );
+    BotNavWallTrace( &tr, ent, ent->client->ps.origin, ent->r.mins, ent->r.maxs, sample, qtrue );
+    if( tr.startsolid || tr.allsolid || tr.fraction == 1.0f ||
+        tr.entityNum != ENTITYNUM_WORLD || fabs( tr.plane.normal[ 2 ] ) >= 0.3f ||
+        ( tr.surfaceFlags & ( SURF_SKY | SURF_SLICK ) ) ) return qfalse;
+    VectorCopy( tr.plane.normal, wallNormal );
+    VectorMA( tr.endpos, 1.0f, wallNormal, entry );
+    VectorSubtract( entry, ent->client->ps.origin, probe ); probe[ 2 ] = 0.0f;
+    distance = VectorNormalize( probe );
+    if( distance > 48.0f || distance < 1.0f ) return qfalse;
+    before = navTraces;
+    fraction = BotNavStepClearance( ent, probe, distance, MASK_PLAYERSOLID, sample, &tr );
+    navWallPlanTraces += navTraces - before;
+    if( fraction < 0.95f ) return qfalse;
+    VectorCopy( sample, entry );
+  }
+  if( !BotNavWallTouch( ent, entry, wallNormal, qtrue ) ) return qfalse;
+  ProjectPointOnPlane( along, toward, wallNormal ); along[ 2 ] = 0.0f;
+  if( VectorNormalize( along ) < 0.3f ) return qfalse;
+  progress = DotProduct( along, toward );
+  if( progress < 0.35f ) return qfalse;
+  VectorMA( entry, 128.0f + ( candidate & 1 ) * 32.0f, along, crawl );
+  crawl[ 2 ] += attached ? 32.0f : 64.0f;
+  VectorMA( entry, 1.0f, wallNormal, sample );
+  VectorMA( crawl, 1.0f, wallNormal, probe );
+  BotNavWallTrace( &tr, ent, sample, ent->r.mins, ent->r.maxs, probe, qtrue );
+  if( !BotNavClassClear( &tr ) ) return qfalse;
+  VectorSubtract( crawl, entry, delta ); distance = VectorLength( delta );
+  steps = (int)( distance / 32.0f ) + 1;
+  for( i = 1; i <= steps; i++ )
+  {
+    VectorMA( entry, (float)i / steps, delta, sample );
+    if( !BotNavWallTouch( ent, sample, wallNormal, qtrue ) ) return qfalse;
+  }
+  if( !BotNavWallLanding( ent, crawl, wallNormal, landing, qtrue ) ) return qfalse;
+  client->wallPhase = attached ? 2 : 1;
+  client->wallClass = ent->client->ps.stats[ STAT_CLASS ];
+  client->wallStarted = level.time; client->wallDeadline = level.time + 6000;
+  client->wallApproaches++;
+  client->wallPlanTravelStart = client->wallTravel;
+  if( attached ) client->wallAttachments++;
+  VectorCopy( entry, client->wallEntry ); VectorCopy( crawl, client->wallCrawl );
+  VectorCopy( landing, client->wallExit ); VectorCopy( wallNormal, client->wallNormal );
+  VectorCopy( goal, client->wallGoal );
+  VectorCopy( ent->client->ps.origin, client->wallObservedOrigin );
+  client->wallObservedTime = level.time; client->wallObservedAttached = attached;
+  return qtrue;
+}
+
+static void BotNavWallAbort( botNavClient_t *client )
+{
+  if( client->wallPhase ) client->wallAborted++;
+  client->wallPhase = 0; client->wallOrder = qfalse;
+  client->wallNextTry = level.time + 1800;
+}
+
+/* This hook is also used after combat aiming. Cache the proved direction for
+ * this think so the approach and combat hooks do not advance phases twice. */
+qboolean G_BotNavWallMove( gentity_t *ent, botState_t *bot, const vec3_t goal,
+                          usercmd_t *cmd, qboolean faceGoal )
+{
+  botNavClient_t *client;
+  vec3_t normal, direction, target, threat, moved, forward, right, end, represented;
+  trace_t tr;
+  int allies = 0, enemies = 0;
+  float distance, fmove, rmove, cross, determinant, scale;
+  qboolean retreat = qfalse, context, attached, detach = qfalse;
+  if( !ent || !ent->client || !bot || ent->s.number < 0 || ent->s.number >= MAX_CLIENTS ) return qfalse;
+  client = &navClients[ ent->s.number ];
+  if( !navTuning.integer || bot->wallSuppressed || bot->team != TEAM_ALIENS || bot->role == BOT_BUILD ||
+      !BG_ClassHasAbility( ent->client->ps.stats[ STAT_CLASS ], SCA_WALLCLIMBER ) ||
+      ent->health <= 0 || ent->client->sess.spectatorState != SPECTATOR_NOT )
+  { BotNavWallAbort( client ); return qfalse; }
+  BG_GetClientNormal( &ent->client->ps, normal );
+  attached = ( ent->client->ps.eFlags & EF_WALLCLIMB ) && normal[ 2 ] < 0.7f;
+  context = G_BotTeamCombatContext( ent, threat, &allies, &enemies, &retreat );
+  if( client->wallPhase && ( client->wallClass != ent->client->ps.stats[ STAT_CLASS ] ||
+      level.time >= client->wallDeadline ||
+      ( context && retreat ) ) )
+  { BotNavWallAbort( client ); return qfalse; }
+  if( client->wallMoveTime != level.time )
+  {
+    client->wallMoveTime = level.time; client->wallOrder = qfalse;
+    if( !client->wallPhase )
+    {
+      if( level.time < client->wallNextTry ||
+          ( context ? retreat || allies < 2 || enemies > allies ||
+            DistanceSquared( threat, ent->client->ps.origin ) < 96.0f * 96.0f :
+            !BotNavWallSupportedApproach( ent ) ) ||
+          !BotNavWallPlan( ent, bot, client, goal, attached, normal ) ) return qfalse;
+    }
+    if( client->wallObservedTime && client->wallObservedAttached && attached )
+    {
+      VectorSubtract( ent->client->ps.origin, client->wallObservedOrigin, moved );
+      distance = VectorLength( moved );
+      if( distance < 128.0f ) client->wallTravel += distance;
+    }
+    VectorCopy( ent->client->ps.origin, client->wallObservedOrigin );
+    client->wallObservedTime = level.time; client->wallObservedAttached = attached;
+    if( client->wallPhase == 1 && attached )
+    { client->wallPhase = 2; client->wallAttachments++; }
+    if( client->wallPhase == 2 )
+    {
+      if( !attached )
+      {
+        if( client->wallTravel - client->wallPlanTravelStart >= 64.0f &&
+            ent->client->ps.groundEntityNum == ENTITYNUM_WORLD &&
+            DistanceSquared( ent->client->ps.origin, client->wallExit ) < 48.0f * 48.0f )
+        { client->wallCompleted++; client->wallPhase = 0; client->wallNextTry = level.time + 2500; }
+        else BotNavWallAbort( client );
+        return qfalse;
+      }
+      if( DotProduct( normal, client->wallNormal ) < 0.8f ) { BotNavWallAbort( client ); return qfalse; }
+      if( DistanceSquared( ent->client->ps.origin, client->wallCrawl ) < 24.0f * 24.0f )
+      {
+        if( !BotNavWallLanding( ent, ent->client->ps.origin, normal, client->wallExit, qfalse ) )
+        { BotNavWallAbort( client ); return qfalse; }
+        client->wallPhase = 3;
+      }
+    }
+    if( client->wallPhase == 1 )
+    {
+      VectorMA( client->wallEntry, -4.0f, client->wallNormal, target );
+      VectorSubtract( target, ent->client->ps.origin, direction ); direction[ 2 ] = 0.0f;
+      if( VectorNormalize( direction ) < 0.01f ) { BotNavWallAbort( client ); return qfalse; }
+      if( BotNavStepClearance( ent, direction, 24.0f, MASK_PLAYERSOLID, end, &tr ) < 0.95f &&
+          tr.entityNum != ENTITYNUM_WORLD ) { BotNavWallAbort( client ); return qfalse; }
+    }
+    else if( client->wallPhase == 2 )
+    {
+      VectorSubtract( client->wallCrawl, ent->client->ps.origin, direction );
+      ProjectPointOnPlane( direction, direction, normal );
+      if( VectorNormalize( direction ) < 0.01f ||
+          BotNavSurfaceClearance( ent, direction, normal, &tr ) < 0.95f )
+      { BotNavWallAbort( client ); return qfalse; }
+      client->wallCrawlOrders++;
+    }
+    else if( client->wallPhase == 3 )
+    {
+      detach = qtrue;
+      if( attached )
+      {
+        if( !BotNavWallLanding( ent, ent->client->ps.origin, normal, target, qfalse ) )
+        { BotNavWallAbort( client ); return qfalse; }
+        /* Stop on the surface before letting gravity provide the checked
+         * landing. An unbraked wall run can carry past that floor column. */
+        ProjectPointOnPlane( moved, ent->client->ps.velocity, normal );
+        if( VectorLengthSquared( moved ) > 25.0f ) detach = qfalse;
+        VectorClear( direction );
+      }
+      else
+      {
+        if( ent->client->ps.groundEntityNum == ENTITYNUM_WORLD )
+        {
+          if( client->wallTravel - client->wallPlanTravelStart >= 64.0f ) client->wallCompleted++;
+          else client->wallAborted++;
+          client->wallPhase = 0; client->wallNextTry = level.time + 2500;
+          client->nextPlan = 0; return qfalse;
+        }
+        VectorClear( direction );
+      }
+    }
+    else return qfalse;
+    VectorCopy( direction, client->wallDirection );
+    client->wallOrder = qtrue; client->wallOrderClimb = !detach;
+    client->wallOrderDetach = detach;
+  }
+  if( !client->wallOrder ) return qfalse;
+  VectorCopy( client->wallDirection, direction );
+  if( faceGoal && VectorLengthSquared( direction ) > 0.01f )
+  {
+    VectorMA( ent->client->ps.origin, 128.0f, direction, target );
+    VectorMA( target, ent->client->ps.viewheight, normal, target );
+    G_BotAim( ent, cmd, target );
+  }
+  BotNavViewVectors( ent, cmd, forward, right );
+  if( attached )
+  {
+    ProjectPointOnPlane( forward, forward, normal ); ProjectPointOnPlane( right, right, normal );
+  }
+  else forward[ 2 ] = right[ 2 ] = 0.0f;
+  VectorNormalize( forward ); VectorNormalize( right );
+  fmove = DotProduct( direction, forward ); rmove = DotProduct( direction, right );
+  /* Combat pitch can make projected movement axes nonorthogonal. Solve the
+   * small basis system instead of turning a requested climb into a strafe. */
+  cross = DotProduct( forward, right ); determinant = 1.0f - cross * cross;
+  if( attached && determinant > 0.05f )
+  {
+    scale = fmove; fmove = ( scale - cross * rmove ) / determinant;
+    rmove = ( rmove - cross * scale ) / determinant;
+  }
+  VectorScale( forward, fmove, represented ); VectorMA( represented, rmove, right, represented );
+  if( attached && VectorLengthSquared( direction ) > 0.01f &&
+      ( VectorNormalize( represented ) < 0.01f || DotProduct( represented, direction ) < 0.9f ) )
+  {
+    /* Looking straight into a wall can leave only one usable movement axis.
+     * Use the ability's tangent for this input and stop firing until combat
+     * reaims on the next think; a proved climb must not become a zero-motion
+     * order or a shot aimed at an unrelated place. */
+    VectorMA( ent->client->ps.origin, 128.0f, direction, target );
+    VectorMA( target, ent->client->ps.viewheight, normal, target );
+    G_BotAim( ent, cmd, target );
+    cmd->buttons &= ~( BUTTON_ATTACK | BUTTON_ATTACK2 | BUTTON_USE_HOLDABLE );
+    if( client->wallReaimTime != level.time )
+    { client->wallReaimTime = level.time; client->wallReaims++; }
+    BotNavViewVectors( ent, cmd, forward, right );
+    ProjectPointOnPlane( forward, forward, normal ); ProjectPointOnPlane( right, right, normal );
+    VectorNormalize( forward ); VectorNormalize( right );
+    fmove = DotProduct( direction, forward ); rmove = DotProduct( direction, right );
+  }
+  scale = MAX( fabs( fmove ), fabs( rmove ) );
+  cmd->forwardmove = cmd->rightmove = 0;
+  if( scale > 0.01f )
+  {
+    cmd->forwardmove = (int)( 127.0f * fmove / scale );
+    cmd->rightmove = (int)( 127.0f * rmove / scale );
+  }
+  if( client->wallOrderDetach ) BotNavDetachInput( ent, cmd );
+  else if( client->wallOrderClimb &&
+           ( !( ent->client->ps.persistant[ PERS_STATE ] & PS_WALLCLIMBINGTOGGLE ) ||
+             !( ent->client->ps.stats[ STAT_STATE ] & SS_WALLCLIMBING ) ) ) cmd->upmove = -127;
+  return qtrue;
+}
+
 void G_BotNavMove( gentity_t *ent, botState_t *bot, const vec3_t goal,
                    usercmd_t *cmd, qboolean faceGoal )
 {
@@ -1976,7 +2343,16 @@ void G_BotNavMove( gentity_t *ent, botState_t *bot, const vec3_t goal,
   client = &navClients[ ent->s.number ];
   classNum = ent->client->ps.stats[ STAT_CLASS ];
   if( navTuning.integer && client->routeGroup != G_BotTeamRouteGroup( ent ) )
-    client->nextPlan = 0;
+  {
+    /* Membership remains current, but its advisory corridor cost does not
+     * invalidate a usable route on every merge/split. Hull, goal and safety
+     * changes still take their immediate paths below. */
+    if( ( client->cursor < client->length || client->classDirect ) &&
+        client->planClass == classNum && DistanceSquared( goal, client->goal ) <= 192.0f * 192.0f &&
+        client->avoidUntil <= level.time && level.time < client->planTime + 1000 )
+      client->nextPlan = MAX( client->nextPlan, client->planTime + 1000 );
+    else client->nextPlan = 0;
+  }
   if( navTuning.integer && client->planClass != classNum )
   {
     G_BotNavClearRoute( ent->s.number );
@@ -1996,6 +2372,8 @@ void G_BotNavMove( gentity_t *ent, botState_t *bot, const vec3_t goal,
   }
   jumping = qfalse;
   flags = 0;
+
+  if( G_BotNavWallMove( ent, bot, goal, cmd, faceGoal ) ) return;
 
   if( level.time >= client->nextPlan || Distance( goal, client->goal ) > 192.0f )
   {

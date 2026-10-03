@@ -97,11 +97,21 @@ any omitted count.
 For physical movement diagnostics, add `--set g_botBenchmarkSampleMsec=500`
 with details enabled. The diagnostic interval defaults to 30,000 ms and is
 bounded to 250–30,000 ms; it changes observations, not game ticks. Detailed
-samples include physical spawn generation, velocity, movement commands, squad
-route preference and crowd yields. Compare movement only across continuous
+samples include physical spawn generation, velocity, movement commands, nearby
+group membership, sensed support/opponent counts, tactical regroup orders,
+wall-flank phases and accepted taunt events. Compare movement only across continuous
 living samples from the same physical generation and class. Different route
 preferences alone do not prove different traversed corridors; use actual
 positions and crossing gates. Finer samples increase output and analysis cost.
+
+Use separate offline fixtures for controlled placement, group merge/split,
+outnumbered retreats and wall movement. `botprobe` requires explicit
+`g_botProbe 1`, `sv_cheats 1`, `dedicated 1` and `net_enabled 0`; ordinary matches
+leave it disabled. Fixture snapshots mark forced class/spawn and placement
+generations separately from natural physical spawns. A placement or manual
+input demonstrates only the subsequent observed behavior, and is excluded
+from fair match and economy evidence. Requested gesture buttons do not prove
+taunting: accepted `EV_TAUNT` counts and normal animation timers do.
 
 ## Interpret results
 
@@ -123,11 +133,16 @@ routes and stuck escapes. Inspect early samples for connection between bases:
 after a base is destroyed, its connectivity result no longer describes the
 earlier route. Spawn statistics count physical spawns separately from evolution.
 Construction statistics count buildings actually placed through normal rules.
-`progress_renewals` counts expired assault timers extended after a healthy,
-damage-capable leader made new progress toward the same objective.
-`timed_wave_recalls` counts surviving waves that expired, rather than players
-or groups lost through deaths. These counters help distinguish useful attacks
-from repeated trips back to the gathering point.
+With `teamwork_mode: dynamic_nearby`, the legacy `attack_waves`, `rallied_players` and
+`defensive_dispatches` fields describe cumulative local group formations, current
+regrouping actors and cumulative tactical withdrawals. `launched_members`
+counts membership changes, `peak_group` is the largest observed nearby
+component, `advance_orders` counts changed tactical orders, and `active_members`
+counts living attackers (the JSON key is `active_assault_members`).
+`progress_renewals` and `timed_wave_recalls` remain zero:
+fixed wave lifetimes were removed. Historical checkpoints retain their original
+wave-based meanings. Use each actor's current `tactics` object to examine
+membership and local numerical pressure.
 Class-clearance counters include movement, rally/search and prospective evolution
 checks used to validate actual hulls and their jump limits. Evolution queries do
 not increment movement route-plan totals. A pending class check means that the bot is

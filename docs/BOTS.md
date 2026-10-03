@@ -101,7 +101,7 @@ case-insensitive full bot name also works. Quote names containing spaces.
 | `bot add <humans\|aliens> [skill\|bell] [name] [attack\|defend\|build]` | Add one bot; the default role is `attack`. `bell` samples its skill from the distribution. |
 | `bot fill <humans\|aliens> <bot count> [skill\|bell]` | Adjust that team's number of bots. `bell` distributes skills across the resulting team, including existing bots. Human players do not count. |
 | `bot remove <id\|name\|all>` | Remove matching bots and free their slots. |
-| `bot tactics` | Inspect attack waves, dispatched members, peak group size, active assault members, movement orders and spawn demand. |
+| `bot tactics [id]` | Inspect group changes and regrouping; an optional bot ID shows current membership, sensed numbers and tactical goal. |
 | `bot skill <id\|name\|all> <1-10\|bell>` | Change skill immediately; `all bell` spreads skills across all bots. |
 | `bot role <id\|name\|all> <attack\|defend\|build>` | Change the requested role. |
 | `bot team <id\|name> <humans\|aliens\|spectator>` | Move one bot to a team, or leave it spectating. |
@@ -147,7 +147,8 @@ Numeric skill settings still work. Skills persist across map restarts and loads.
 | `g_botHumanReaction` | `300` | Base target acquisition delay in milliseconds, scaled by skill; the 16v16 profile uses `600`. |
 | `g_botHumanTurnSpeed` | `240` | Base aim turning speed in degrees per second, scaled by skill; the 16v16 profile uses `160`. |
 | `g_botHumanFireDelay` | `160` | Base pause between firing bursts in milliseconds, scaled by skill; the 16v16 profile uses `300`. |
-| `g_botTeamwork` | `0` | Shared observed contacts, home defense, rally groups, escorts and assault orders; the 16v16 profile enables it. |
+| `g_botTeamwork` | `0` | Shared observed contacts, dynamic nearby groups, local retreats, swarm approaches and home defense; the 16v16 profile enables it. |
+| `g_botTaunt` | `1` | Occasional normal gesture animations after an enemy kill or during quiet moments near teammates; disable with `set g_botTaunt 0`. |
 | `g_botSpawnScale` | `0` | Scale spawn targets with team size and queues, prioritize capacity and check spacing/exits; the 16v16 profile enables it. |
 | `g_botNavTuning` | `0` | Enable the improved graph, anchoring and partial-route behavior; the 16v16 profile enables it. |
 | `g_botNavNodes` | `4096` | Maximum floor nodes, clamped to 1,024–8,192; takes effect on map load. The 16v16 profile uses `8192`. |
@@ -164,19 +165,32 @@ maintain the base and defend themselves against nearby enemies. Urgent builders
 limit combat attention to close threats so distant fights do not continually
 interrupt spawn construction.
 
-With teamwork enabled, attackers gather at a reachable floor rally point and
-launch groups of two to six. Durable/evolved leaders wait briefly for escorts;
-followers catch up when separated. Assault movement advances toward enemy
-spawns while retaining weapon aim, and yields to close threats, healing trips
-and active tramples. A healthy leader that can damage the objective can extend
-an expired assault by 15 seconds after making at least 96 units of new progress
-within the previous 25 seconds. Leader or objective changes reset that evidence;
-idle groups still return to gather. Nearby attackers concentrate on visible enemy structures.
-Teammates share verified sightings, retaining the observed position for at most
-20 seconds. After the enemy's buildings are gone, fighters stop gathering and
-search reachable floor areas and remembered contact locations. Patrol assignments
-spread coverage among teammates without supplying hidden enemy coordinates.
-Bots keep their assigned roles; builders continue maintaining the base.
+With teamwork enabled, groups form from living fighters who are currently
+nearby and can see each other. Membership is recalculated as fighters arrive,
+separate or die. There are no fixed squad rosters, designated squad leaders or
+base rally launch gates. Each bot keeps its own movement and weapon decisions
+while sharing current contacts and objectives with its neighbors.
+
+Fighters compare nearby armed support with freshly sighted opponents. When
+outnumbered, they retreat toward actual reinforcements or a checked fallback
+position away from the threat, then reassess as the balance changes. Human
+attackers and defenders both use this behavior. Aliens converge on nearby
+fighters before committing against humans, so support can arrive together.
+Brief local regrouping replaces indefinite waiting at the base. Healing,
+equipment trips and close-range self-defense still use the ordinary game rules.
+
+Teammates share verified player sightings. Current combat counts use fresh
+reports; older last-seen positions are remembered for at most 20 seconds for
+searching. Hidden players' live positions are not tracked. Enemy structures
+remain shared strategic objectives, with spawns and cores given priority.
+After infrastructure is gone, patrol assignments spread fighters across
+reachable areas. Builders keep their construction reservations and support roles.
+
+Bots occasionally use the game's normal taunt gesture after a confirmed enemy
+kill or while resting near teammates. They avoid gesturing during attacks,
+healing, tactical retreats, wall attachment or injury, and accepted gestures
+have a 20–40 second cooldown. `set g_botTaunt 0` disables AI gestures. The game
+plays the normal animation and taunt event; bots do not send chat messages.
 
 A human builder spawns with a construction kit and uses its blaster in combat,
 then restores the kit. A living human reassigned to building can exchange its
@@ -278,13 +292,15 @@ surface crawls during stuck recovery, preferring downward travel toward a floor.
 Wall walkers check movement in their current surface plane and can release an
 underside attachment when stalled above a verified nearby floor.
 
-Route costs include stable corridor preferences for each assault squad and
-bounded congestion penalties for other squads' upcoming paths. Preferences
-change with new squads, lives and stuck recovery, while each actual route still
+Route costs include corridor preferences for each current nearby group and
+bounded congestion penalties for other groups' upcoming paths. Preferences
+change with group membership, lives and stuck recovery, while each actual route still
 passes the class's collision checks. These costs encourage alternatives when
 the map offers them; a passage with only one legal exit still needs queuing.
-Waiting attackers can form a nearby group after 30 seconds or release a lone
-healthy survivor after 60 seconds, avoiding an indefinite fixed-rally wait.
+Wall-capable alien fighters can choose a short surface flank during a supported
+approach. The entry, crawl and floor exit require actual hull collision and
+hazard checks. This supplements the floor graph with local wall travel; it does
+not assume that every visible wall leads to a usable route.
 
 Graph generation is bounded: up to 8,192 floor nodes, 12 directed links per node,
 256 manual seeds and a generation trace budget per server frame. `botnav status`
@@ -493,7 +509,8 @@ bundled compiler's C dialect.
 | `code/game/g_bot_nav.c` | Collision graph, A*, saved seeds, local steering and final movement safety checks. |
 | `code/game/g_bot_combat.c` | Targets, aiming, attacks, shop/evolution decisions and spawn loadouts. |
 | `code/game/g_bot_build.c` | Construction plans, placement scoring, builder reservations and human repairs. |
-| `code/game/g_bot_team.c` | Shared contacts/objectives, defensive reserves, rally groups, escorts and coordinated assault orders. |
+| `code/game/g_bot_team.c` | Sighted contacts, current nearby groups, swarm convergence, tactical retreats and home defense. |
+| `code/game/g_bot_probe.c` | Explicit offline fixture controls for testing groups and physical movement; disabled during ordinary play. |
 | `code/game/g_bot_benchmark.c` | Offline match control, actual gameplay counters, queue/class occupation and optional position/collision snapshots. |
 | `code/game/g_cmds.c` | Shared checked buy/sell/class-change operations used by players and bots. |
 | `code/game/g_active.c`, `g_main.c`, `g_client.c` | Frame integration, bot movement, connection/disconnection and voting behavior. |
@@ -513,7 +530,7 @@ for special movers or surfaces rather than assuming visible geometry is walkable
 
 ## Known limits
 
-- The global graph represents floors. Wall walking is local steering/recovery;
+- The global graph represents floors. Wall walking uses local flanks and recovery;
   it is not a complete wall-and-ceiling surface graph or a guarantee of a route
   to every ceiling-mounted base.
 - Complex moving platforms, timed jumps, teleporters and unusual doors lack
