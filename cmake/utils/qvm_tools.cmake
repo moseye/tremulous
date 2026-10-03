@@ -29,6 +29,12 @@ ExternalProject_Add(qvm_tools
     BUILD_BYPRODUCTS ${Q3RCC} ${Q3CPP} ${Q3LCC} ${Q3ASM}
     INSTALL_COMMAND "")
 
+# q3lcc does not emit dependency files. Header changes must invalidate cached
+# objects too, including the menu definitions shared with the packaged UI.
+file(GLOB_RECURSE QVM_HEADERS CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/code/*.h"
+    "${CMAKE_SOURCE_DIR}/assets/*.h")
+
 function(add_qvm MODULE_NAME)
     list(REMOVE_AT ARGV 0)
     cmake_parse_arguments(ARG "" "" "DEFINITIONS;OUTPUT_NAME;OUTPUT_DIRECTORY;SOURCES" ${ARGV})
@@ -70,7 +76,7 @@ function(add_qvm MODULE_NAME)
         add_custom_command(
             OUTPUT ${ASM_FILE}
             COMMAND ${Q3LCC} ${LCC_FLAGS} -o ${ASM_FILE} ${SOURCE}
-            DEPENDS ${SOURCE} qvm_tools ${Q3RCC} ${Q3CPP} ${Q3LCC}
+            DEPENDS ${SOURCE} ${QVM_HEADERS} qvm_tools ${Q3RCC} ${Q3CPP} ${Q3LCC}
             VERBATIM
             COMMENT "Building C object ${ASM_FILE_COMMENT}")
 

@@ -169,6 +169,15 @@ The checkpoint also records live smoke tests, within-mode replays and a local
 portable spectator preview. It identifies tested hashes and limitations;
 it does not certify the later ramp fix or a final release.
 
+[The ramp-validation checkpoint](../tests/results/bot-ramp-validation-2026-10-02.json)
+records the subsequent supported-ramp fix and its release-version checks.
+Nine native 40-minute matches ended in draws. Nexus6 full-route success rose
+to 14–18%, and two seeds continued alien combat beyond minute 38. Alien damage
+to human buildings remained low: 137 total across the six Arachnid2/Niveus
+matches, and zero across Nexus6. Some actors still stalled on world geometry or
+teammates and structures. The file distinguishes the modules used for those
+long matches from the later binaries with refreshed version labels.
+
 Throughput depends on the CPU, VM, map, congestion and combat. Both time spent
 inside the simulation and total process time including startup are reported.
 Combined throughput divides completed game seconds by the entire suite's wall

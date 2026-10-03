@@ -17,6 +17,7 @@ import zipfile
 BOT_CHECKPOINTS = {
     'bot-balance-checkpoint-2026-10-02.json': 'sanitized_bot_balance_checkpoint',
     'bot-progress-retention-2026-10-02.json': 'sanitized_bot_progress_retention_checkpoint',
+    'bot-ramp-validation-2026-10-02.json': 'sanitized_bot_ramp_validation_checkpoint',
 }
 RUNTIME_FILES = ('tremulous.exe', 'tremded.exe', 'SDL2.dll',
                  'renderer_opengl1.dll', 'renderer_opengl2.dll')
