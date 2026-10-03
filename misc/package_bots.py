@@ -18,6 +18,7 @@ BOT_CHECKPOINTS = {
     'bot-balance-checkpoint-2026-10-02.json': 'sanitized_bot_balance_checkpoint',
     'bot-progress-retention-2026-10-02.json': 'sanitized_bot_progress_retention_checkpoint',
     'bot-ramp-validation-2026-10-02.json': 'sanitized_bot_ramp_validation_checkpoint',
+    'bot-dynamic-groups-2026-10-03.json': 'sanitized_bot_dynamic_groups_checkpoint',
 }
 RUNTIME_FILES = ('tremulous.exe', 'tremded.exe', 'SDL2.dll',
                  'renderer_opengl1.dll', 'renderer_opengl2.dll')
@@ -129,6 +130,12 @@ def public_validation_summary(file, report):
         if not isinstance(entry, dict):
             continue
         name, size, digest = entry.get('name'), entry.get('bytes'), entry.get('sha256')
+        # Client probes hash the actual packaged member; give known members the
+        # same logical name as the loose build files used by dedicated probes.
+        member_names = {f'base/{module}': module for module in NATIVE_MODULES}
+        member_names.update({f'base/zz-tremulous-bots.pk3!vm/{module}': module
+                             for module in ('game.qvm', 'cgame.qvm', 'ui.qvm')})
+        name = member_names.get(name, name) if isinstance(name, str) else name
         if (isinstance(name, str) and re.fullmatch(r'[A-Za-z0-9_.-]+', name) and
                 type(size) is int and size >= 0 and isinstance(digest, str) and
                 re.fullmatch(r'[A-Fa-f0-9]{64}', digest)):
@@ -165,7 +172,7 @@ def public_validation_summary(file, report):
             visual.get('free_flight_prompt_observed') == 'Press ENTER or MOUSE3 to follow a player')
         if 'partly occluded' in str(visual.get('qualification', '')):
             summary['visual_verification']['qualification'] = (
-                'Free-flight mode was visible, with the camera partly occluded by a nearby bot. '
+                'Free-flight mode was visible, with the camera partly occluded by nearby geometry or a model. '
                 'Manual camera movement was not exercised.')
     return summary
 
@@ -196,8 +203,9 @@ def portable_benchmark_text(text):
             raise ValueError(f'benchmark documentation is missing its checkpoint link: {name}')
         text = text.replace(source_link, f'(benchmark-checkpoints/{name})')
     title, newline, body = text.partition('\n')
-    notice = ('The bundled checkpoint JSON files are historical evidence for the runtime hashes '
-              'they record. They do not validate this portable package or certify balanced play.')
+    notice = ('The bundled checkpoint JSON files contain evidence for the runtime hashes '
+              'they record. Matching hashes determine which build each test covers; '
+              'these results do not certify balanced play or complete map navigation.')
     return title + newline + '\n' + notice + '\n\n' + body.lstrip('\n')
 
 
@@ -228,7 +236,7 @@ def preflight(source, build, data, output, vc_runtime, reports):
     for checkpoint in checkpoint_files:
         evidence = json.loads(checkpoint.read_text(encoding='utf-8'))
         if evidence.get('kind') != BOT_CHECKPOINTS[checkpoint.name]:
-            raise ValueError(f'expected sanitized historical bot checkpoint evidence: {checkpoint.name}')
+            raise ValueError(f'expected sanitized bot checkpoint evidence: {checkpoint.name}')
     benchmark_text = portable_benchmark_text(
         (source / 'docs' / 'BOT_BENCHMARKS.md').read_text(encoding='utf-8'))
     sdl_headers = list((source / 'code' / 'thirdparty').glob('SDL2-*/include/SDL.h'))

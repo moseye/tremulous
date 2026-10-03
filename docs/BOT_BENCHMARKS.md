@@ -207,6 +207,23 @@ inside the simulation and total process time including startup are reported.
 Combined throughput divides completed game seconds by the entire suite's wall
 time; it is not the speed of one server.
 
+[The dynamic-groups checkpoint](../tests/results/bot-dynamic-groups-2026-10-03.json)
+records the `145daaed` runtime used by the current update. Thirty-six controlled
+behavior runs across native, interpreted QVM and compiled QVM verify changing
+nearby groups, numerical retreats, alien convergence and accepted taunt events.
+Separate wall fixtures verify attachment, a vertical and horizontal crawl, and
+a grounded exit. These staged fixtures are not fair balance matches.
+
+Three normal 15-minute native Arachnid2 matches observed changing memberships,
+actual outnumbered withdrawals and sampled grounded wall completions. Three
+compiled-QVM matches cover Arachnid2, Niveus and Nexus6. All six ended in draws;
+aliens caused no building damage, and long stationary attacker episodes remain.
+The checkpoint also records replay/cadence checks, complete 62-bot telemetry,
+a normal 16v16 console smoke and a portable spectator preview. It distinguishes
+observed movement from tactical success and does not certify balanced play or
+every map passage. Documentation and packaging changes after `145daaed` do not
+change the frozen gameplay binaries.
+
 ## Engine controls
 
 The runner configures these automatically:
