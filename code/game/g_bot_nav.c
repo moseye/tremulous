@@ -116,6 +116,7 @@ static int navSeedEntity, navSeedDirection;
 static int navPlans, navRoutes;
 static int navFallbacks, navFailures, navStuckEscapes, navSeedClient;
 static int navClassTraces, navClassNodes, navClassLinks, navClassRejected, navClassDeferred;
+static int navAscentChecks, navAscentPassed, navAscentRejected, navAscentDeferred;
 static float navClassGravity;
 static vmCvar_t navNodeLimit, navTuning;
 static int navLimit;
@@ -140,6 +141,8 @@ static const float navDirections[ 8 ][ 2 ] =
 };
 
 static void BotNavClassPoint( int number, class_t classNum, vec3_t point );
+static int BotNavClassWalkLink( const vec3_t from, const vec3_t to,
+                               class_t classNum, int *flags );
 
 /* Offline diagnostics must not consume the AI's generation trace budget. */
 void G_BotNavDebugJSON( gentity_t *ent, char *out, int size )
@@ -521,7 +524,20 @@ static int BotNavClassLink( int from, int edge, class_t classNum, int *flags )
   }
   BotNavClassPoint( from, classNum, start );
   BotNavClassPoint( destination, classNum, end );
-  result = BotNavClassSegment( start, end, classNum, flags, qfalse );
+  if( navTuning.integer && end[ 2 ] - start[ 2 ] > BotNavClassLift( classNum ) + 0.5f )
+  {
+    /* A supported ramp can rise farther than a single jump. Prove the whole
+     * connector with this class's footprint, support and standing clearance
+     * before accepting it; blocked ascents still obey the jump-height cap. */
+    navAscentChecks++;
+    result = BotNavClassWalkLink( start, end, classNum, flags );
+    if( result == BOT_NAV_CLASS_UNKNOWN ) navAscentDeferred++;
+    else if( result == qtrue ) navAscentPassed++;
+    else navAscentRejected++;
+    /* A currently enabled hurt volume is not permanent blocked geometry. */
+    if( result == qfalse && !navConnectorCacheable ) return result;
+  }
+  else result = BotNavClassSegment( start, end, classNum, flags, qfalse );
   if( result == BOT_NAV_CLASS_UNKNOWN ) return result;
   node->linkChecked[ edge ] |= bit;
   if( result )
@@ -611,6 +627,7 @@ static int BotNavClassWalkLink( const vec3_t from, const vec3_t to,
   vec3_t mins, maxs;
   int i, j, result, replacement = -1, oldest = 0;
   if( !navTuning.integer ) return BotNavWalkLink( from, to, flags );
+  navConnectorCacheable = qtrue;
   BotNavClassBounds( classNum, mins, maxs );
   for( i = 0; i < BOT_NAV_CONNECTOR_CACHE; i++ )
   {
@@ -625,15 +642,14 @@ static int BotNavClassWalkLink( const vec3_t from, const vec3_t to,
         !VectorCompare( connector->from, from ) || !VectorCompare( connector->to, to ) ) continue;
     /* Only static world clearance/support is cached. Recheck the complete
      * actual class footprint at every saved support sample on every hit. */
-    if( BotNavHazard( from, MAX( maxs[ 0 ], maxs[ 1 ] ), maxs[ 2 ] ) ||
-        BotNavHazard( to, MAX( maxs[ 0 ], maxs[ 1 ] ), maxs[ 2 ] ) ) return qfalse;
+    if( BotNavClassConnectorHazard( from, maxs ) ||
+        BotNavClassConnectorHazard( to, maxs ) ) return qfalse;
     for( j = 0; j < connector->supportCount; j++ )
-      if( BotNavHazard( connector->support[ j ], MAX( maxs[ 0 ], maxs[ 1 ] ), maxs[ 2 ] ) ) return qfalse;
+      if( BotNavClassConnectorHazard( connector->support[ j ], maxs ) ) return qfalse;
     connector->used = level.time;
     *flags = connector->flags;
     return connector->result;
   }
-  navConnectorCacheable = qtrue;
   navConnectorSupportCount = 0;
   *flags = 0;
   result = BotNavClassWalkLinkUncached( from, to, classNum, flags );
@@ -1244,6 +1260,7 @@ void G_BotNavInit( void )
   navPlans = navRoutes = 0;
   navFallbacks = navFailures = navStuckEscapes = navSeedClient = 0;
   navClassTraces = navClassNodes = navClassLinks = navClassRejected = navClassDeferred = 0;
+  navAscentChecks = navAscentPassed = navAscentRejected = navAscentDeferred = 0;
   memset( navAnchorRetries, 0, sizeof( navAnchorRetries ) );
   memset( navConnectors, 0, sizeof( navConnectors ) );
   memset( navScoutAssigned, 0, sizeof( navScoutAssigned ) );
@@ -2079,6 +2096,12 @@ void G_BotNavClassMetrics( int *nodes, int *links, int *rejected, int *deferred 
 {
   *nodes = navClassNodes; *links = navClassLinks;
   *rejected = navClassRejected; *deferred = navClassDeferred;
+}
+
+void G_BotNavAscentMetrics( int *checks, int *passed, int *rejected, int *deferred )
+{
+  *checks = navAscentChecks; *passed = navAscentPassed;
+  *rejected = navAscentRejected; *deferred = navAscentDeferred;
 }
 
 void G_BotNavMoverMetrics( int *pending, int *attempts, int *resolved, int *rejected, int *dropped )

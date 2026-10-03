@@ -272,6 +272,9 @@ on map initialization; only explicit manual seeds are saved.
 With navigation tuning enabled, floor connectors use the bot's actual footprint
 and standing height, including small aliens beneath overhangs. Wider classes can
 adjust a graph point's feet by at most an ordinary 18-unit step to fit ramps.
+An ascending graph edge above the class's single-jump height requires full
+class-sized floor and clearance checks along the ramp. Its total rise can exceed
+a jump only when continuous supported movement passes those checks.
 Static connector proofs are cached briefly for the exact class and endpoints;
 hazards are checked again on reuse. Unknown checks and mover collisions are
 deferred. Directions blocked by moving doors are retained for bounded retries.

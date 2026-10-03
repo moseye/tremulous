@@ -126,6 +126,13 @@ waiting for a safe route; it is not counted as a completed route. Detailed
 snapshots include the actual hull, next waypoint, collision results and the age
 of the most recent movement safety decision to help diagnose crowded exits.
 
+`class_ascent_checks`, `class_ascent_passed`, `class_ascent_rejected` and
+`class_ascent_deferred` count uncached rising-edge queries whose total rise
+exceeds that class's single-jump height. Accepted queries prove actual class
+clearance and floor support along a continuous ramp. Deferred queries can recur
+when the shared trace budget is exhausted; they are not cached as blocked.
+These query totals do not count distinct ramps or completed journeys.
+
 Moving-door diagnostics report `mover_pending`, `mover_retry_attempts`,
 `mover_resolved_attempts`, `mover_rejected_attempts` and `mover_dropped`.
 Generation retains up to 512 blocked node/direction pairs and retries up to four
@@ -150,6 +157,17 @@ still needed; they do not establish balanced play or certify a later build.
 The checkpoint also records matching native real-time/fast/replayed telemetry
 for a 15-second startup scenario. Those checks prove tick and replay behavior
 for that scenario; the short equivalence run did not include combat.
+
+[The progress-retention checkpoint](../tests/results/bot-progress-retention-2026-10-02.json)
+records the later `b683f331` runtime, before the graph-ramp fix. A same-runtime
+Arachnid2 comparison over three seeds reduced human player kills from 699 to
+401 and increased alien player kills from 89 to 123 with the selected aim
+settings. Alien building pressure remained weak. Six 40-minute native matches
+on Arachnid2/Niveus produced one human win and five time-limit draws. Nexus6
+connected its bases, but activity still stopped well before the time limit.
+The checkpoint also records live smoke tests, within-mode replays and a local
+portable spectator preview. It identifies tested hashes and limitations;
+it does not certify the later ramp fix or a final release.
 
 Throughput depends on the CPU, VM, map, congestion and combat. Both time spent
 inside the simulation and total process time including startup are reported.

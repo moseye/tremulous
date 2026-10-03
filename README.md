@@ -8,7 +8,7 @@ or server console.
 ## Fresh Windows install: 16 vs 16
 
 1. On Windows 10/11 **x64**, open the
-   [bot release](https://github.com/moseye/tremulous/releases/tag/v0.1.0-bots)
+   [bot release](https://github.com/moseye/tremulous/releases/tag/v0.2.0-bots)
    and download **tremulous-bots-windows-x64.zip**.
 2. Extract the entire ZIP into a writable folder, such as
    `C:\Games\Tremulous-Bots`. Open the extracted folder containing
@@ -28,9 +28,12 @@ maps and required Windows runtimes. You do not need an existing Tremulous
 installation, Python or a compiler to play. The downloadable binary is for
 Windows x64; other platforms require a source build.
 
-The launcher loads **ATCS**, adds **16 human and 16 alien bots**, and allocates
-**40 client slots**, leaving eight slots for people. The first bot added to each
-empty team is a builder. ATCS is compact and gets crowded at this size.
+The launcher loads **Arachnid2**, adds **16 human and 16 alien bots**, and
+allocates **40 client slots**, leaving eight slots for people. Each team starts
+with two builders, two defenders and twelve attackers. Attackers assemble into
+groups and advance toward enemy spawns, with evolved aliens leading escorts.
+Human aim has skill-dependent angular error, reaction time, turning speed and
+pauses between firing bursts.
 
 Each team's skill spread follows evenly spaced normal-distribution quantiles,
 centered at **5.5** with approximate standard deviation **1.7**, rounded and
@@ -44,7 +47,11 @@ bounded to levels 1–10. Assignments are shuffled across bot IDs and roles. For
 Bots enter the normal spawn queue. A spawn building has a **10-second spawn
 interval**, so a full team can take several minutes to enter when only one
 spawn is available. Queued bots need a surviving, usable team spawn. Navigation
-also builds gradually while the match runs.
+also builds gradually while the match runs. Builders aim for one spawn per four
+players, with a minimum of two and a maximum of eight, and raise that target
+under heavy queues. They prioritize additional spawns before defenses and check
+spacing and grounded exits. Normal build-point limits can prevent reaching the
+target.
 
 ## Inspect or change the match
 
@@ -54,22 +61,21 @@ Press **~** to open the console. Use:
 set g_botDebug 1
 bot list
 bot buildings
+bot tactics
 botnav status
 ```
 
 `bot list` shows IDs, roles, skills and whether bots are alive or queued. Debug
 mode adds health, class, weapon, credits, position and target information.
-`bot buildings` lists structures; `botnav status` reports graph generation.
+`bot buildings` lists structures; `bot tactics` shows attack groups, orders and
+spawn demand; `botnav status` reports graph generation.
 
 To turn an existing local match into the same 16 vs 16 setup, enter these
 commands in order. **Loading the map restarts the match** and applies the larger
 client limit.
 
 ```text
-set sv_maxclients 40
-map atcs
-bot fill humans 16 bell
-bot fill aliens 16 bell
+exec bots16.cfg
 bot list
 ```
 
@@ -99,7 +105,7 @@ port is allowed.
 For a fresh checkout of the bot branch:
 
 ```powershell
-git clone --branch codex/bot-support-16v16 https://github.com/moseye/tremulous.git
+git clone --branch codex/bot-balance-benchmarks https://github.com/moseye/tremulous.git
 cd tremulous
 ```
 
@@ -114,7 +120,8 @@ checkout. Adjust the paths to the extracted folder containing `tremded.exe`:
 python tests/bot_smoke.py `
   --server "C:\Games\Tremulous-Bots\tremded.exe" `
   --basepath "C:\Games\Tremulous-Bots" `
-  --bots-per-team 16 --bell-skills --vm 2 --duration 90
+  --map arachnid2 --bots-per-team 16 --bell-skills --vm 2 --duration 90 `
+  --balanced-profile
 ```
 
 The script starts an isolated local server, checks bot lifecycle and commands,
@@ -123,7 +130,17 @@ Reports and logs are saved under `build-bot-tests`. Add `--economy` to accelerat
 the existing passive-credit and stage settings for a separate purchase and
 evolution check. Those accelerated settings are absent from the play launchers.
 
+For long matches in seconds of wall time, use the
+[parallel benchmark guide](docs/BOT_BENCHMARKS.md). It covers fixed seeds,
+paired tuning experiments, replay checks and interpreting wins, draws, base
+pressure and queue sizes. Fast simulation is offline; use the play launcher
+for spectating.
+
 ## Current limits
+
+The selected aim settings reduce human combat advantage, but the bots still
+apply weak pressure to human bases and matches can stalemate. Nexus6 can strand
+aliens near upper spawn platforms. The bot behavior remains experimental.
 
 Base placement uses sampled positions and local choke-point traces, so cramped
 bases can produce awkward layouts. The global navigation graph covers floors;

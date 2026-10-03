@@ -205,6 +205,7 @@ static void BotBenchRecord( const char *event, const char *winner, const char *r
   int components, largest, basesConnected;
   int fallbacks, failures, stuckEscapes;
   int classNodes, classLinks, classRejected, classDeferred;
+  int ascentChecks, ascentPassed, ascentRejected, ascentDeferred;
   int moverPending, moverAttempts, moverResolved, moverRejected, moverDropped;
   BotBenchTeamJSON( TEAM_HUMANS, humans, sizeof( humans ) );
   BotBenchTeamJSON( TEAM_ALIENS, aliens, sizeof( aliens ) );
@@ -212,6 +213,7 @@ static void BotBenchRecord( const char *event, const char *winner, const char *r
   G_BotNavConnectivity( &components, &largest, &basesConnected );
   G_BotNavDiagnostics( &fallbacks, &failures, &stuckEscapes );
   G_BotNavClassMetrics( &classNodes, &classLinks, &classRejected, &classDeferred );
+  G_BotNavAscentMetrics( &ascentChecks, &ascentPassed, &ascentRejected, &ascentDeferred );
   G_BotNavMoverMetrics( &moverPending, &moverAttempts, &moverResolved,
                         &moverRejected, &moverDropped );
   Com_sprintf( line, sizeof( line ),
@@ -226,6 +228,8 @@ static void BotBenchRecord( const char *event, const char *winner, const char *r
     "\"partial_routes\":%d,\"failed_full_routes\":%d,\"stuck_escapes\":%d,"
     "\"class_checked_nodes\":%d,\"class_checked_links\":%d,"
     "\"class_rejected_queries\":%d,\"class_deferred_queries\":%d,"
+    "\"class_ascent_checks\":%d,\"class_ascent_passed\":%d,"
+    "\"class_ascent_rejected\":%d,\"class_ascent_deferred\":%d,"
     "\"mover_pending\":%d,\"mover_retry_attempts\":%d,\"mover_resolved_attempts\":%d,"
     "\"mover_rejected_attempts\":%d,\"mover_dropped\":%d}}\n",
     event, benchMap, benchSeed, level.time - benchStart,
@@ -236,6 +240,7 @@ static void BotBenchRecord( const char *event, const char *winner, const char *r
     trap_Cvar_VariableIntegerValue( "g_botNavNodes" ), humans, aliens,
     nodes, links, expanded, plans, routes, components, largest, basesConnected,
     fallbacks, failures, stuckEscapes, classNodes, classLinks, classRejected, classDeferred,
+    ascentChecks, ascentPassed, ascentRejected, ascentDeferred,
     moverPending, moverAttempts, moverResolved, moverRejected, moverDropped );
   if( trap_Cvar_VariableIntegerValue( "g_botBenchmarkDetails" ) )
   {

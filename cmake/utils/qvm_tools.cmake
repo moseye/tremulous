@@ -50,7 +50,8 @@ function(add_qvm MODULE_NAME)
     set(QVM_ASM_DIR ${CMAKE_BINARY_DIR}/qvm.dir/${MODULE_NAME})
     file(MAKE_DIRECTORY ${QVM_ASM_DIR})
 
-    set(LCC_FLAGS "")
+    # Custom QVM compiler commands do not inherit native compile definitions.
+    set(LCC_FLAGS "-DPRODUCT_VERSION=\"${PRODUCT_VERSION}\"")
     foreach(DEFINITION IN LISTS ARG_DEFINITIONS)
         list(APPEND LCC_FLAGS "-D${DEFINITION}")
     endforeach()
@@ -70,6 +71,7 @@ function(add_qvm MODULE_NAME)
             OUTPUT ${ASM_FILE}
             COMMAND ${Q3LCC} ${LCC_FLAGS} -o ${ASM_FILE} ${SOURCE}
             DEPENDS ${SOURCE} qvm_tools ${Q3RCC} ${Q3CPP} ${Q3LCC}
+            VERBATIM
             COMMENT "Building C object ${ASM_FILE_COMMENT}")
 
         list(APPEND ASM_FILES ${ASM_FILE})

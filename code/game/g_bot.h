@@ -52,6 +52,7 @@ void G_BotNavMetrics( int *nodes, int *links, int *expanded,
 void G_BotNavConnectivity( int *components, int *largest, int *basesConnected );
 void G_BotNavDiagnostics( int *fallbacks, int *failures, int *stuckEscapes );
 void G_BotNavClassMetrics( int *nodes, int *links, int *rejected, int *deferred );
+void G_BotNavAscentMetrics( int *checks, int *passed, int *rejected, int *deferred );
 void G_BotNavMoverMetrics( int *pending, int *attempts, int *resolved,
                           int *rejected, int *dropped );
 void G_BotNavDebugJSON( gentity_t *ent, char *out, int size );
