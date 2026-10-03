@@ -272,6 +272,9 @@ right-of-way pauses, and do not blacklist a stair waypoint solely for a crowd.
 Local steering also checks supported downward drops up to 96 units with the
 whole standing hull and fresh hazard checks, so the stair guard does not stop
 bots before a legal low ledge. A missing landing still stops movement.
+Bots stranded on teammates or their own buildings try checked lateral steps
+to a nearby floor. A wall walker without a floor anchor can use short, checked
+surface crawls during stuck recovery, preferring downward travel toward a floor.
 Wall walkers check movement in their current surface plane and can release an
 underside attachment when stalled above a verified nearby floor.
 

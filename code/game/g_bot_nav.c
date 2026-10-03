@@ -1814,11 +1814,16 @@ static qboolean BotNavUnstack( gentity_t *ent, botNavClient_t *client, vec3_t di
     { VectorCopy( client->yieldDirection, direction ); return qtrue; }
     client->yieldUntil = 0;
   }
-  if( ground < 0 || ground >= level.maxclients || ground == ent->s.number ||
+  if( ground < 0 || ground >= level.num_entities || ground == ent->s.number ||
       level.time < client->nextYield ) return qfalse;
   ally = &g_entities[ ground ];
-  if( !ally->inuse || !ally->client || ally->health <= 0 ||
-      ally->client->pers.teamSelection != ent->client->pers.teamSelection ) return qfalse;
+  if( !ally->inuse || ally->health <= 0 ) return qfalse;
+  if( ally->client )
+  {
+    if( ally->client->pers.teamSelection != ent->client->pers.teamSelection ) return qfalse;
+  }
+  else if( ally->s.eType != ET_BUILDABLE ||
+           ally->buildableTeam != ent->client->pers.teamSelection ) return qfalse;
   client->nextYield = level.time + 500;
   VectorCopy( ent->client->ps.origin, feet ); feet[ 2 ] += ent->r.mins[ 2 ];
   if( !BotNavFloor( feet, 32.0f, 96.0f, floor ) || feet[ 2 ] - floor[ 2 ] < 18.0f )
@@ -1909,6 +1914,44 @@ static float BotNavSurfaceClearance( gentity_t *ent, const vec3_t direction,
   BotNavTrace( &tr, end, ent->r.mins, ent->r.maxs, support, ent->s.number, BOT_NAV_MASK );
   if( tr.fraction == 1.0f && !BotNavSupport( ent, end ) ) return 0.0f;
   return fraction;
+}
+
+/* A floor graph cannot anchor an actor stranded on a vertical surface. During
+ * an actual stall, crawl toward a nearby floor using only proved local surface
+ * movement. This is recovery, not permission to follow an unverified global
+ * shortcut. Gravity supplies a stable preference; checked tangents give a
+ * blocked crawler alternatives without detaching over an unsupported void. */
+static qboolean BotNavSurfaceEscape( gentity_t *ent, const vec3_t normal,
+                                     const vec3_t goal, vec3_t direction )
+{
+  vec3_t down, toward, candidate, bestDirection;
+  trace_t tr;
+  float score, best = 0.0f, clearance;
+  int i;
+  VectorSet( down, 0, 0, -1 ); ProjectPointOnPlane( down, down, normal );
+  VectorNormalize( down );
+  VectorSubtract( goal, ent->client->ps.origin, toward );
+  ProjectPointOnPlane( toward, toward, normal ); VectorNormalize( toward );
+  for( i = 0; i < 10; i++ )
+  {
+    if( i == 0 ) VectorCopy( down, candidate );
+    else if( i == 1 ) VectorCopy( toward, candidate );
+    else
+    {
+      VectorSet( candidate, navDirections[ i - 2 ][ 0 ], navDirections[ i - 2 ][ 1 ], 0 );
+      ProjectPointOnPlane( candidate, candidate, normal );
+      VectorMA( candidate, 0.75f, down, candidate );
+    }
+    if( VectorNormalize( candidate ) < 0.01f ) continue;
+    clearance = BotNavSurfaceClearance( ent, candidate, normal, &tr );
+    if( clearance < 0.95f ) continue;
+    score = clearance + 0.5f * DotProduct( candidate, down ) +
+            0.15f * DotProduct( candidate, toward );
+    if( score > best ) { best = score; VectorCopy( candidate, bestDirection ); }
+  }
+  if( best == 0.0f ) return qfalse;
+  VectorCopy( bestDirection, direction );
+  return qtrue;
 }
 
 void G_BotNavMove( gentity_t *ent, botState_t *bot, const vec3_t goal,
@@ -2079,6 +2122,9 @@ void G_BotNavMove( gentity_t *ent, botState_t *bot, const vec3_t goal,
     yielding = BotNavUnstack( ent, client, direction );
     if( yielding ) distance = 72.0f;
   }
+  if( navTuning.integer && climbing && offSurfaceGoal && distance < 12.0f &&
+      level.time < client->escapeUntil &&
+      BotNavSurfaceEscape( ent, normal, goal, direction ) ) distance = 48.0f;
   if( distance < 12.0f )
   {
     if( wallclimber && climbing )
