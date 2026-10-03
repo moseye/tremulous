@@ -486,7 +486,14 @@ static float BotNavStepChain( const vec3_t from, const vec3_t to,
         *block = tr; return (float)( i - 1 ) / steps;
       }
     }
-    else stepHeight = 18.0f;
+    else
+    {
+      /* A local actor may walk off a supported low ledge. The graph's ordinary
+       * stair proof remains limited to 18 units, but local steering must not
+       * cancel a legal descent merely because Pmove briefly leaves the floor.
+       * Trace the entire standing hull to a fresh landing, never across a gap. */
+      stepHeight = classChecks ? 18.0f : 96.0f;
+    }
     /* Include collision's one-eighth-unit boundary tolerance so an exactly
      * 18-unit descent hits its floor rather than ending at fraction one. */
     VectorCopy( next, down ); down[ 2 ] -= stepHeight + 0.125f;
@@ -506,7 +513,8 @@ static float BotNavStepChain( const vec3_t from, const vec3_t to,
     }
     if( tr.fraction == 1.0f || tr.plane.normal[ 2 ] < 0.7f ||
         ( tr.surfaceFlags & SURF_SKY ) ||
-        fabs( tr.endpos[ 2 ] - current[ 2 ] ) > 18.125f )
+        tr.endpos[ 2 ] - current[ 2 ] > 18.125f ||
+        current[ 2 ] - tr.endpos[ 2 ] > ( classChecks ? 18.125f : 96.125f ) )
     {
       BotNavStepUnsafe( block ); return (float)( i - 1 ) / steps;
     }

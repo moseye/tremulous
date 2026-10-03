@@ -269,6 +269,9 @@ steps. Local steering checks supported landings along a short lookahead instead
 of requiring one raised sweep across the whole staircase. Nearby teammates
 remain solid obstacles: bots try a supported side or back step, with brief
 right-of-way pauses, and do not blacklist a stair waypoint solely for a crowd.
+Local steering also checks supported downward drops up to 96 units with the
+whole standing hull and fresh hazard checks, so the stair guard does not stop
+bots before a legal low ledge. A missing landing still stops movement.
 Wall walkers check movement in their current surface plane and can release an
 underside attachment when stalled above a verified nearby floor.
 
