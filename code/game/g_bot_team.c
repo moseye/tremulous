@@ -397,7 +397,7 @@ static void BotTeamRegroup( team_t team, botTeamPlan_t *plan )
     { actor->regroupReason = BOT_REGROUP_NONE; actor->regroupUntil = actor->regroupSince = 0; continue; }
     reason = actor->outnumbered ? BOT_REGROUP_RETREAT : BOT_REGROUP_NONE;
     if( reason == BOT_REGROUP_NONE && team == TEAM_ALIENS && g_botStates[ i ].role == BOT_ATTACK &&
-        actor->allies == 1 && actor->enemies > 0 &&
+        actor->groupSize < 2 && actor->enemies > 0 &&
         ( actor->regroupReason == BOT_REGROUP_JOIN || level.time >= actor->regroupCooldown ) ) reason = BOT_REGROUP_JOIN;
     if( reason == BOT_REGROUP_NONE )
     {

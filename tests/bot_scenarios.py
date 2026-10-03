@@ -130,23 +130,37 @@ def group_scenario():
     return lines + ["quit"]
 
 
-def retreat_scenario(team, role="attack"):
+def retreat_scenario(team, role="attack", paired=False):
     lines = start()
     actor, friends, enemies, y = ((0, range(1, 6), range(6, 11), -1024) if team == "humans"
                                  else (6, range(7, 12), range(0, 5), 1024))
     lines += [f"bot role {actor} {role}"]
     place(lines, actor, 0, y, actor < 6)
     for n, ident in enumerate(enemies):
-        place(lines, ident, 220+n*48, y+(n % 2)*64, ident < 6, 180)
+        if paired:
+            x, dy = ((220, -220), (280, -110), (320, 0), (280, 110), (220, 220))[n]
+        else:
+            x, dy = 220+n*48, (n % 2)*64
+        place(lines, ident, x, y+dy, ident < 6, 180)
     for n, ident in enumerate(friends):
         place(lines, ident, -1800+n*48, y+800, ident < 6)
+    participants = [actor]
+    if paired:
+        partner = next(iter(friends))
+        place(lines, partner, -64, y-96, partner < 6)
+        lines += [f"bot role {partner} {role}"]
+        participants.append(partner)
     # Let the ordinary perception pass observe the staged threat while the
     # actor remains paused; the first movement then has a known disadvantage.
     sample(lines, "disadvantaged_start", 12)
-    lines += [f"botprobe pause {actor} 0"]
-    for i in range(12):
+    lines += [f"botprobe pause {ident} 0" for ident in participants]
+    # Keep the original visible threat in range at reinforcement; a longer
+    # successful withdrawal can legitimately leave the 850-unit sight range.
+    for i in range(4):
         sample(lines, "disadvantaged_" + str(i), 5)
     for n, ident in enumerate(friends):
+        if ident in participants:
+            continue
         lines.append(f"botprobe near {ident} {actor} {-48-n*48} -96 0 0")
     lines.append("botprobe snapshot reinforcement_arrived")
     for i in range(16):
@@ -165,9 +179,9 @@ def swarm_scenario():
         place(lines, ident, 2200+(ident-8)*48, 1700, False)
     sample(lines, "swarm_start", 12)
     lines += ["botprobe pause 6 0"]
-    for i in range(12):
+    for i in range(4):
         sample(lines, "join_" + str(i), 5)
-    lines += ["botprobe snapshot swarm_merge", "botprobe pause 7 0"]
+    lines += ["botprobe snapshot ally_released", "botprobe pause 7 0"]
     for i in range(48):
         sample(lines, "commit_" + str(i), 5)
     return lines + ["quit"]
@@ -242,6 +256,10 @@ SCENARIOS = {"dynamic_groups": group_scenario, "retreat_humans": lambda: retreat
              "retreat_aliens": lambda: retreat_scenario("aliens"), "accepted_taunts": taunt_scenario,
              "defender_humans": lambda: retreat_scenario("humans", "defend"),
              "defender_aliens": lambda: retreat_scenario("aliens", "defend"),
+             "group_retreat_humans": lambda: retreat_scenario("humans", paired=True),
+             "group_retreat_aliens": lambda: retreat_scenario("aliens", paired=True),
+             "group_defender_humans": lambda: retreat_scenario("humans", "defend", paired=True),
+             "group_defender_aliens": lambda: retreat_scenario("aliens", "defend", paired=True),
              "organic_swarm": swarm_scenario,
              "disabled_taunts": disabled_taunts_scenario, "autonomous_wall": wall_scenario}
 
@@ -285,12 +303,13 @@ def assertions(name, snapshots):
                   all(group_id(b) > 0 for b in reinforced) and
                   bot(by_phase["reinforced"], base+1)["fixture_spawn_generation"] > dead["fixture_spawn_generation"],
                   {"group_ids": [group_id(b) for b in reinforced]})
-    elif name.startswith(("retreat_", "defender_")):
+    elif name.startswith(("retreat_", "defender_", "group_retreat_", "group_defender_")):
         actor = 0 if name.endswith("humans") else 6
         initial = bot(by_phase["disadvantaged_start"], actor)
         disadvantaged = [bot(s, actor) for s in snapshots if s["phase"].startswith("disadvantaged_") and s["phase"] != "disadvantaged_start"]
         reinforced = [bot(s, actor) for s in snapshots if s["phase"].startswith("reinforced_")]
-        threat = [316, initial["position"][1]+25.6, initial["position"][2]]
+        enemies = [bot(by_phase["disadvantaged_start"], i) for i in (range(6, 11) if actor == 0 else range(0, 5))]
+        threat = [sum(b["position"][k] for b in enemies)/len(enemies) for k in range(3)]
         initial_distance = math.dist(initial["position"], threat)
         distances = [math.dist(b["position"], threat) for b in disadvantaged]
         check("disadvantage_causes_physical_retreat", any(retreating(b) for b in disadvantaged) and
@@ -306,10 +325,36 @@ def assertions(name, snapshots):
         generations = {(b["fixture_spawn_generation"], b["fixture_placement_generation"]) for b in
                        [initial, *disadvantaged, before, *reinforced]}
         check("actor_moves_without_fixture_reposition", len(generations) == 1, sorted(generations))
-        if name.startswith("defender_"):
+        if "defender_" in name:
             check("actor_retains_defender_role", all(b["role"] == 1 for b in
                   [initial, *disadvantaged, before, *reinforced]),
                   [b["role"] for b in [initial, *disadvantaged, before, *reinforced]])
+        if name.startswith("group_"):
+            partner = actor+1
+            pair_start = [initial, bot(by_phase["disadvantaged_start"], partner)]
+            check("actual_multi_member_group_is_outnumbered", group_id(pair_start[0]) == group_id(pair_start[1]) and
+                  all(b["tactics"]["group_size"] >= 2 and b["tactics"]["nearby_enemies"] > b["tactics"]["nearby_allies"]
+                      for b in pair_start), [b["tactics"] for b in pair_start])
+            observations = [bot(s, partner) for s in snapshots if s["phase"].startswith("disadvantaged_") and
+                            s["phase"] != "disadvantaged_start"]
+            partner_distance = math.dist(pair_start[1]["position"], threat)
+            check("second_group_member_physically_withdraws", any(retreating(b) for b in observations) and
+                  max(math.dist(b["position"], threat) for b in observations) > partner_distance+64,
+                  {"initial_distance": partner_distance, "positions": [b["position"] for b in observations]})
+            partner_before = bot(by_phase["reinforcement_arrived"], partner)
+            partner_after = [bot(s, partner) for s in snapshots if s["phase"].startswith("reinforced_")]
+            check("second_member_resumes_physical_attack", any(not retreating(b) for b in partner_after) and
+                  min(math.dist(b["position"], threat) for b in partner_after) <
+                  math.dist(partner_before["position"], threat)-32,
+                  {"before_distance": math.dist(partner_before["position"], threat),
+                   "positions": [b["position"] for b in partner_after]})
+            all_partner = [bot(s, partner) for s in snapshots]
+            check("second_group_member_is_same_life_without_reposition", len({
+                  (b["fixture_spawn_generation"], b["fixture_placement_generation"]) for b in all_partner}) == 1,
+                  [b["position"] for b in all_partner])
+            if "defender_" in name:
+                check("second_member_retains_defender_role", all(b["role"] == 1 for b in all_partner),
+                      [b["role"] for b in all_partner])
     elif name == "organic_swarm":
         initial = by_phase["swarm_start"]
         actor, ally = bot(initial, 6), bot(initial, 7)
@@ -321,14 +366,17 @@ def assertions(name, snapshots):
         check("solitary_alien_physically_converges_on_actual_ally", any(
               math.dist(b["position"], ally["position"]) < math.dist(actor["position"], ally["position"])-64
               for b in approaching), [b["position"] for b in approaching])
-        merged = by_phase["swarm_merge"]
-        pair = [bot(merged, i) for i in (6, 7)]
-        check("physical_neighbors_form_observed_group", group_id(pair[0]) == group_id(pair[1]) and
-              min(b["tactics"]["group_size"] for b in pair) >= 2 and
-              math.dist(pair[0]["position"], pair[1]["position"]) <= 450,
-              {"positions": [b["position"] for b in pair], "tactics": [b["tactics"] for b in pair]})
         commits = [s for s in snapshots if s["phase"].startswith("commit_")]
-        target_position = bot(merged, 0)["position"]
+        merged = next((s for s in commits if group_id(bot(s, 6)) == group_id(bot(s, 7)) and
+                       min(bot(s, i)["tactics"]["group_size"] for i in (6, 7)) >= 2 and
+                       math.dist(bot(s, 6)["position"], bot(s, 7)["position"]) <= 450), None)
+        pair = [bot(merged or by_phase["ally_released"], i) for i in (6, 7)]
+        check("physical_neighbors_form_observed_group", merged is not None,
+              {"phase": merged["phase"] if merged else None, "positions": [b["position"] for b in pair],
+               "tactics": [b["tactics"] for b in pair]})
+        if merged:
+            commits = [s for s in commits if s["time_ms"] >= merged["time_ms"]]
+        target_position = bot(merged or initial, 0)["position"]
         distances = [[math.dist(bot(s, i)["position"], target_position) for i in (6, 7)] for s in commits]
         check("merged_aliens_both_autonomously_approach_enemy", all(
               min(row[k] for row in distances) < math.dist(pair[k]["position"], target_position)-64
@@ -377,13 +425,41 @@ def assertions(name, snapshots):
                "flags": [s["taunts_enabled"] for s in snapshots]})
     elif name == "autonomous_wall":
         actors = [bot(s, 6) for s in snapshots]
-        attached = [b for b in actors if abs(b["grapple_point"][2]) < .7 and b["ground_entity"] == 1022]
-        max_surface_travel = max((math.dist(a["position"], b["position"]) for a in attached for b in attached), default=0)
-        check("ai_wall_movement_has_physical_progress", len(attached) >= 2 and max_surface_travel >= 96,
-              {"attached_observations": len(attached), "max_surface_displacement": max_surface_travel,
-               "observed_positions": [b["position"] for b in attached]})
+        plans = {}
+        for snapshot, b in zip(snapshots, actors):
+            nav = b["navigation"]
+            if abs(b["grapple_point"][2]) < .7 and b["ground_entity"] == 1022 and nav["wall_plan_age_ms"] >= 0:
+                start_time = snapshot["time_ms"]-nav["wall_plan_age_ms"]
+                plans.setdefault(start_time, []).append((snapshot["time_ms"], b))
+        progress = [{"plan_start_ms": key, "first_ms": observations[0][0],
+                     "last_ms": observations[-1][0], "samples": len(observations),
+                     "max_displacement": max((math.dist(a[1]["position"], b[1]["position"])
+                                              for a in observations for b in observations), default=0),
+                     "completed_before": observations[0][1]["navigation"]["wall_completed"],
+                     "approaches_before": observations[0][1]["navigation"]["wall_approaches"],
+                     "aborted_before": observations[0][1]["navigation"]["wall_aborted"],
+                     "positions": [b["position"] for _, b in observations]}
+                    for key, observations in plans.items()]
+        qualified = [p for p in progress if p["samples"] >= 2 and p["max_displacement"] >= 96]
+        check("ai_wall_movement_has_physical_progress", bool(qualified), progress)
+        landings = []
+        for plan in qualified:
+            for snapshot, b in zip(snapshots, actors):
+                foot = b["position"][2]+b["mins"][2]
+                if snapshot["time_ms"] > plan["last_ms"] and b["grapple_point"][2] >= .7 and b["ground_entity"] == 1022 and \
+                        min(abs(foot-.125), abs(foot-48.125)) <= 2 and \
+                        b["navigation"]["wall_approaches"] == plan["approaches_before"] and \
+                        b["navigation"]["wall_aborted"] == plan["aborted_before"] and \
+                        b["navigation"]["wall_completed"] > plan["completed_before"]:
+                    landings.append({"plan_start_ms": plan["plan_start_ms"], "time_ms": snapshot["time_ms"],
+                                     "position": b["position"], "foot_height": foot,
+                                     "wall_completed": b["navigation"]["wall_completed"]})
+                    break
+        check("actual_wall_progress_returns_to_known_supported_floor", bool(landings), landings)
         generations = {(b["fixture_spawn_generation"], b["fixture_placement_generation"]) for b in actors}
-        check("wall_progress_is_autonomous_same_life", len(generations) == 1 and all(not b["paused"] for b in actors), sorted(generations))
+        released = [bot(s, 6) for s in snapshots if s["phase"] != "wall_start"]
+        check("wall_progress_is_autonomous_same_life", len(generations) == 1 and
+              len({b["class"] for b in actors}) == 1 and all(not b["paused"] for b in released), sorted(generations))
         check("alien_attacks_with_local_group", any(b["tactics"]["group_size"] >= 3 and not retreating(b) for b in actors),
               [b["tactics"] for b in actors])
     return checks

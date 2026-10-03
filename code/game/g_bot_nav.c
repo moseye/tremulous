@@ -76,12 +76,12 @@ typedef struct
   int wallPhase, wallStage, wallClass, wallStarted, wallDeadline, wallNextTry, wallCandidate;
   int wallMoveTime, wallApproaches, wallAttachments, wallCrawlOrders;
   int wallCompleted, wallAborted, wallObservedTime, wallReaims, wallReaimTime;
-  int retreatProgressTime;
+  int regroupProgressTime;
   float wallTravel, wallPlanTravelStart;
   qboolean wallOrder, wallOrderClimb, wallOrderDetach, wallObservedAttached;
   vec3_t wallEntry, wallRise, wallCrawl, wallExit, wallNormal, wallGoal;
   vec3_t wallDirection, wallObservedOrigin;
-  vec3_t retreatProgressPoint;
+  vec3_t regroupProgressPoint;
 } botNavClient_t;
 
 typedef struct
@@ -213,7 +213,7 @@ void G_BotNavDebugJSON( gentity_t *ent, char *out, int size )
     "\"step_fraction\":%.3f,\"body_fraction\":%.3f,\"body_startsolid\":%d,\"body_hit\":%d,"
     "\"route_group\":%d,\"route_variant\":%d,\"route_epoch\":%d,\"crowd_yields\":%d,"
     "\"movement_fraction\":%.3f,\"movement_blocker\":%d,\"movement_age_ms\":%d,\"movement_reason\":%d,"
-    "\"local_retreat_age_ms\":%d,\"local_retreat_point\":[%.1f,%.1f,%.1f],"
+    "\"local_regroup_age_ms\":%d,\"local_regroup_point\":[%.1f,%.1f,%.1f],"
     "\"wall_phase\":%d,\"wall_stage\":%d,\"wall_plan_age_ms\":%d,\"wall_approaches\":%d,\"wall_attachments\":%d,"
     "\"wall_crawl_orders\":%d,\"wall_completed\":%d,\"wall_aborted\":%d,\"wall_reaims\":%d,\"wall_travel_units\":%.1f,"
     "\"wall_entry\":[%.1f,%.1f,%.1f],\"wall_rise\":[%.1f,%.1f,%.1f],\"wall_crawl\":[%.1f,%.1f,%.1f],\"wall_exit\":[%.1f,%.1f,%.1f]}",
@@ -227,8 +227,8 @@ void G_BotNavDebugJSON( gentity_t *ent, char *out, int size )
     client->routeGroup, client->routeVariant, client->routeEpoch, client->crowdYields,
     client->movementFraction, client->movementBlocker,
     client->movementTime ? level.time - client->movementTime : -1, client->movementReason,
-    client->retreatProgressTime ? level.time - client->retreatProgressTime : -1,
-    client->retreatProgressPoint[ 0 ], client->retreatProgressPoint[ 1 ], client->retreatProgressPoint[ 2 ],
+    client->regroupProgressTime ? level.time - client->regroupProgressTime : -1,
+    client->regroupProgressPoint[ 0 ], client->regroupProgressPoint[ 1 ], client->regroupProgressPoint[ 2 ],
     client->wallPhase, client->wallStage, client->wallPhase ? level.time - client->wallStarted : -1,
     client->wallApproaches, client->wallAttachments, client->wallCrawlOrders,
     client->wallCompleted, client->wallAborted, client->wallReaims, client->wallTravel,
@@ -2347,10 +2347,11 @@ qboolean G_BotNavWallMove( gentity_t *ent, botState_t *bot, const vec3_t goal,
 }
 
 /* A distant reinforcement can lack a finished graph route or occupy its own
- * endpoint. With actual fresh numerical disadvantage, take only a short
- * freshly supported step that moves away from the recorded seen threat. This
- * does not mark any graph route or the remaining regroup distance as legal. */
-static qboolean BotNavRetreatProgress( gentity_t *ent, botState_t *bot,
+ * endpoint. A current regroup order permits only a short freshly supported
+ * step toward that ally. Numerical withdrawals must also increase separation
+ * from the recorded seen threat, falling back to moving away when necessary.
+ * Neither case marks the remaining regroup distance or graph route as legal. */
+static qboolean BotNavRegroupProgress( gentity_t *ent, botState_t *bot,
                                        const vec3_t goal, vec3_t point )
 {
   vec3_t threat, toward, away, direction, end, normal;
@@ -2359,26 +2360,26 @@ static qboolean BotNavRetreatProgress( gentity_t *ent, botState_t *bot,
   int allies, enemies, i;
   float dangerDistance;
   if( !bot->rallying || ent->client->ps.groundEntityNum != ENTITYNUM_WORLD ||
-      !G_BotTeamCombatContext( ent, threat, &allies, &enemies, &retreat ) || !retreat ) return qfalse;
+      !G_BotTeamCombatContext( ent, threat, &allies, &enemies, &retreat ) ) return qfalse;
   BG_GetClientNormal( &ent->client->ps, normal );
   if( normal[ 2 ] < 0.7f ) return qfalse;
   dangerDistance = Distance( ent->client->ps.origin, threat );
   VectorSubtract( goal, ent->client->ps.origin, toward ); toward[ 2 ] = 0.0f;
   VectorNormalize( toward );
   VectorSubtract( ent->client->ps.origin, threat, away ); away[ 2 ] = 0.0f;
-  if( VectorNormalize( away ) < 0.01f ) return qfalse;
-  for( i = 0; i < 2; i++ )
+  if( VectorNormalize( away ) < 0.01f && retreat ) return qfalse;
+  for( i = 0; i < ( retreat ? 2 : 1 ); i++ )
   {
     if( i ) VectorCopy( away, direction );
     else VectorCopy( toward, direction );
     if( VectorLengthSquared( direction ) < 0.01f ) continue;
     VectorMA( ent->client->ps.origin, 48.0f, direction, end );
-    if( Distance( end, threat ) < dangerDistance + 8.0f ) continue;
+    if( retreat && Distance( end, threat ) < dangerDistance + 8.0f ) continue;
     if( BotNavStepClearance( ent, direction, 48.0f, MASK_PLAYERSOLID, end, &tr ) < 0.95f ||
-        Distance( end, threat ) < dangerDistance + 8.0f ) continue;
+        ( retreat && Distance( end, threat ) < dangerDistance + 8.0f ) ) continue;
     VectorCopy( end, point );
-    navClients[ ent->s.number ].retreatProgressTime = level.time;
-    VectorCopy( end, navClients[ ent->s.number ].retreatProgressPoint );
+    navClients[ ent->s.number ].regroupProgressTime = level.time;
+    VectorCopy( end, navClients[ ent->s.number ].regroupProgressPoint );
     return qtrue;
   }
   return qfalse;
@@ -2509,7 +2510,7 @@ void G_BotNavMove( gentity_t *ent, botState_t *bot, const vec3_t goal,
   }
 
   if( navTuning.integer && !climbing && DistanceSquared( waypoint, ent->client->ps.origin ) < 1.0f )
-    BotNavRetreatProgress( ent, bot, goal, waypoint );
+    BotNavRegroupProgress( ent, bot, goal, waypoint );
 
   offSurfaceGoal = navTuning.integer && climbing &&
     ( DistanceSquared( waypoint, ent->client->ps.origin ) > 48.0f * 48.0f ||
