@@ -1975,7 +1975,7 @@ static qboolean BotNavSurfaceEscape( gentity_t *ent, const vec3_t normal,
   return qtrue;
 }
 
-+/* Local wall routes are short tactical alternatives to the floor lane. They
+/* Local wall routes are short tactical alternatives to the floor lane. They
  * contain only static geometry and the goal already known to the caller. A
  * surface is useful only when the actor can reach it, stay attached along it,
  * and return to a full-hull, hazard-free floor landing within an ordinary drop. */
