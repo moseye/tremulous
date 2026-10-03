@@ -8,7 +8,7 @@ or server console.
 ## Fresh Windows install: 16 vs 16
 
 1. On Windows 10/11 **x64**, open the
-   [bot release](https://github.com/moseye/tremulous/releases/tag/v0.2.0-bots)
+   [bot release](https://github.com/moseye/tremulous/releases/tag/v0.3.0-bots)
    and download **tremulous-bots-windows-x64.zip**.
 2. Extract the entire ZIP into a writable folder, such as
    `C:\Games\Tremulous-Bots`. Open the extracted folder containing
@@ -32,6 +32,8 @@ The launcher loads **Arachnid2**, adds **16 human and 16 alien bots**, and
 allocates **40 client slots**, leaving eight slots for people. Each team starts
 with two builders, two defenders and twelve attackers. Attackers assemble into
 groups and advance toward enemy spawns, with evolved aliens leading escorts.
+Squads use stable corridor preferences and avoid other squads' reserved paths.
+Waiting attackers can regroup locally when the original rally point is blocked.
 Human aim has skill-dependent angular error, reaction time, turning speed and
 pauses between firing bursts.
 
@@ -105,7 +107,7 @@ port is allowed.
 For a fresh checkout of the bot branch:
 
 ```powershell
-git clone --branch codex/bot-balance-benchmarks https://github.com/moseye/tremulous.git
+git clone --branch codex/bot-dynamic-navigation https://github.com/moseye/tremulous.git
 cd tremulous
 ```
 

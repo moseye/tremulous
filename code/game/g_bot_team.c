@@ -27,6 +27,7 @@ typedef struct
   vec3_t homePoint, rally, objectivePoint, focusPoint, threatPoint, huntPoint, approach;
   qboolean defending[ MAX_CLIENTS ], escorting[ MAX_CLIENTS ];
   int releasedSpawn[ MAX_CLIENTS ], enterTime[ MAX_CLIENTS ], wave[ MAX_CLIENTS ];
+  int memberRole[ MAX_CLIENTS ], memberClass[ MAX_CLIENTS ], memberSpawn[ MAX_CLIENTS ];
   int orderKind[ MAX_CLIENTS ], orderTarget[ MAX_CLIENTS ];
   int contactTime[ MAX_CLIENTS ];
   vec3_t contactPoint[ MAX_CLIENTS ];
@@ -124,7 +125,12 @@ void G_BotTeamInit( void )
   {
     botTeams[ team ].home = botTeams[ team ].objective = -1;
     botTeams[ team ].focus = botTeams[ team ].threat = botTeams[ team ].hunt = -1;
-    for( i = 0; i < MAX_CLIENTS; i++ ) botTeams[ team ].releasedSpawn[ i ] = -1;
+    for( i = 0; i < MAX_CLIENTS; i++ )
+    {
+      botTeams[ team ].releasedSpawn[ i ] = -1;
+      botTeams[ team ].memberRole[ i ] = botTeams[ team ].memberClass[ i ] =
+        botTeams[ team ].memberSpawn[ i ] = -1;
+    }
   }
 }
 
@@ -263,10 +269,56 @@ static void BotTeamUpdateWaves( team_t team, botTeamPlan_t *plan )
   }
 }
 
+static qboolean BotTeamWaiting( gentity_t *ent, team_t team, botTeamPlan_t *plan )
+{
+  int id = ent->s.number;
+  return BotTeamAlive( ent, team ) && g_botStates[ id ].role == BOT_ATTACK &&
+    !plan->defending[ id ] &&
+    !( plan->releasedSpawn[ id ] == g_botStates[ id ].spawnCount && BotTeamWave( plan, id ) );
+}
+
+/* A fixed gathering point must not hold a surviving force forever. Choose one
+ * physical waiting cluster, without reading enemies or inventing route proof.
+ * Score nearby candidates cheaply, then trace only the chosen cluster's LOS. */
+static int BotTeamWaitingPool( team_t team, botTeamPlan_t *plan, int *ready )
+{
+  int i, j, nearby, bestCount = 0, seed = -1, count = 0;
+  float durability, bestDurability = -1.0f;
+  gentity_t *ent;
+  for( i = 0; i < level.maxclients; i++ )
+  {
+    ent = &g_entities[ i ];
+    if( !BotTeamWaiting( ent, team, plan ) ||
+        ent->health < ent->client->ps.stats[ STAT_MAX_HEALTH ] * 0.4f ) continue;
+    nearby = 0;
+    for( j = 0; j < level.maxclients; j++ )
+      if( BotTeamWaiting( &g_entities[ j ], team, plan ) &&
+          g_entities[ j ].health >= g_entities[ j ].client->ps.stats[ STAT_MAX_HEALTH ] * 0.4f &&
+          fabs( ent->r.currentOrigin[ 2 ] - g_entities[ j ].r.currentOrigin[ 2 ] ) <= 64.0f &&
+          DistanceSquared( ent->r.currentOrigin, g_entities[ j ].r.currentOrigin ) <= 280.0f * 280.0f ) nearby++;
+    durability = ent->health + ent->client->ps.stats[ STAT_MAX_HEALTH ] * 0.5f;
+    if( nearby > bestCount || ( nearby == bestCount && durability > bestDurability ) )
+    { bestCount = nearby; bestDurability = durability; seed = i; }
+  }
+  if( seed < 0 ) return 0;
+  for( i = 0; i < level.maxclients; i++ )
+  {
+    ent = &g_entities[ i ];
+    if( !BotTeamWaiting( ent, team, plan ) ||
+        ent->health < ent->client->ps.stats[ STAT_MAX_HEALTH ] * 0.4f ||
+        fabs( ent->r.currentOrigin[ 2 ] - g_entities[ seed ].r.currentOrigin[ 2 ] ) > 64.0f ||
+        DistanceSquared( ent->r.currentOrigin, g_entities[ seed ].r.currentOrigin ) > 280.0f * 280.0f ||
+        ( i != seed && !BotTeamLineClear( ent->r.currentOrigin, g_entities[ seed ].r.currentOrigin ) ) ) continue;
+    ready[ count++ ] = i;
+  }
+  return count;
+}
+
 static void BotTeamLaunch( team_t team, botTeamPlan_t *plan, int needed )
 {
   int i, slot = -1, count = 0, ready[ MAX_CLIENTS ], candidate, totalReady = 0, waiting = 0, spawns = 0;
   float score, best;
+  qboolean fallback = qfalse;
   botAttackWave_t *wave;
   for( i = MAX_CLIENTS; i < level.num_entities; i++ )
     if( g_entities[ i ].inuse && g_entities[ i ].health > 0 && g_entities[ i ].buildableTeam == team &&
@@ -282,9 +334,16 @@ static void BotTeamLaunch( team_t team, botTeamPlan_t *plan, int needed )
   plan->rallied = totalReady;
   if( !waiting ) { plan->waitingSince = 0; return; }
   if( !plan->waitingSince ) plan->waitingSince = level.time;
+  if( totalReady < needed && level.time - plan->waitingSince >= 30000 )
+  {
+    totalReady = BotTeamWaitingPool( team, plan, ready );
+    fallback = totalReady >= 2 ||
+      ( totalReady >= 1 && level.time - plan->waitingSince >= 60000 );
+    if( !fallback ) return;
+  }
   /* Pool across client IDs. A short fixed-slot timeout was calling individual
    * respawns waves even when the other attackers were still queued. */
-  if( totalReady < needed && !( totalReady >= 2 && level.time - plan->waitingSince >= BOT_TEAM_GATHER_TIME ) &&
+  if( !fallback && totalReady < needed && !( totalReady >= 2 && level.time - plan->waitingSince >= BOT_TEAM_GATHER_TIME ) &&
       !( !spawns && totalReady >= 1 ) ) return;
   if( level.time - plan->waitingSince < 1000 ) return;
   for( i = 0; i < BOT_TEAM_MAX_WAVES; i++ )
@@ -308,11 +367,12 @@ static void BotTeamLaunch( team_t team, botTeamPlan_t *plan, int needed )
     i = ready[ candidate ]; ready[ candidate ] = -1;
     plan->releasedSpawn[ i ] = g_botStates[ i ].spawnCount; plan->wave[ i ] = wave->serial;
     plan->escorting[ i ] = qfalse; plan->orderKind[ i ] = 0;
+    if( BotTeamNearRally( &g_entities[ i ], plan ) && plan->rallied > 0 ) plan->rallied--;
     if( wave->leader < 0 ) wave->leader = i;
     count++;
   }
   wave->members = wave->nearLeader = count;
-  plan->waves++; plan->launchedMembers += count; plan->rallied -= count;
+  plan->waves++; plan->launchedMembers += count;
   if( count > plan->peakGroup ) plan->peakGroup = count;
   plan->waitingSince = 0;
 }
@@ -362,11 +422,27 @@ static void BotTeamPlan( team_t team, botTeamPlan_t *plan )
   for( i = 0; i < level.maxclients; i++ )
   {
     if( !G_BotIsBot( i ) || g_botStates[ i ].team != team ) continue;
-    if( plan->enterTime[ i ] != level.clients[ i ].pers.enterTime )
+    if( plan->enterTime[ i ] != level.clients[ i ].pers.enterTime ||
+        plan->memberSpawn[ i ] != g_botStates[ i ].spawnCount ||
+        plan->memberRole[ i ] != g_botStates[ i ].role )
     {
       plan->enterTime[ i ] = level.clients[ i ].pers.enterTime;
+      plan->memberSpawn[ i ] = g_botStates[ i ].spawnCount;
+      plan->memberRole[ i ] = g_botStates[ i ].role;
       plan->releasedSpawn[ i ] = -1; plan->wave[ i ] = plan->orderKind[ i ] = 0;
+      plan->escorting[ i ] = qfalse;
       plan->searchUntil[ i ] = 0;
+    }
+    if( plan->memberClass[ i ] != level.clients[ i ].ps.stats[ STAT_CLASS ] ||
+        ( previousObjective != plan->objective && g_botStates[ i ].role == BOT_ATTACK ) )
+    {
+      /* Evolving survivors and squads with a new building objective retain
+       * their release. Replan movement for the new hull/goal without recalling
+       * a healthy assault to its gathering point. */
+      plan->memberClass[ i ] = level.clients[ i ].ps.stats[ STAT_CLASS ];
+      plan->orderKind[ i ] = 0; plan->escorting[ i ] = qfalse;
+      plan->searchUntil[ i ] = 0;
+      G_BotNavClearRoute( i );
     }
     if( g_botStates[ i ].role == BOT_DEFEND ) plan->defending[ i ] = qtrue;
     if( g_botStates[ i ].role != BOT_ATTACK ) continue;
@@ -393,7 +469,7 @@ static void BotTeamPlan( team_t team, botTeamPlan_t *plan )
   }
   BotTeamUpdateWaves( team, plan );
   needed = MIN( roles, MIN( BOT_TEAM_MAX_GROUP, MAX( 2, ( roles + 2 ) / 3 ) ) );
-  if( needed > 0 && plan->hasEnemyBase && plan->hasRally ) BotTeamLaunch( team, plan, needed );
+  if( needed > 0 && plan->hasEnemyBase ) BotTeamLaunch( team, plan, needed );
 }
 
 void G_BotTeamFrame( void )
@@ -611,6 +687,29 @@ qboolean G_BotTeamAssaultPoint( team_t team, vec3_t goal )
   return qtrue;
 }
 
+/* Navigation can prefer different safe corridors without splitting a squad.
+ * Wave serials belong to a team; compare the team as well as this key when
+ * measuring other squads' traffic. Negative personal keys remain stable for
+ * one life and are separate from positive wave serials. No game RNG is used. */
+int G_BotTeamRouteGroup( gentity_t *ent )
+{
+  botState_t *bot;
+  botTeamPlan_t *plan;
+  botAttackWave_t *wave;
+  int id;
+
+  if( !g_botTeamwork.integer || !ent || !ent->client ) return 0;
+  id = ent->s.number;
+  if( id < 0 || id >= MAX_CLIENTS || !G_BotIsBot( id ) ) return 0;
+  bot = &g_botStates[ id ];
+  if( bot->team != TEAM_HUMANS && bot->team != TEAM_ALIENS ) return 0;
+  plan = &botTeams[ bot->team ];
+  wave = BotTeamWave( plan, id );
+  if( bot->role == BOT_ATTACK && !plan->defending[ id ] && wave &&
+      plan->releasedSpawn[ id ] == bot->spawnCount ) return wave->serial;
+  return -( 1 + id * 17 + bot->spawnCount * 7 );
+}
+
 float G_BotTeamTargetBonus( gentity_t *ent, gentity_t *target )
 {
   botTeamPlan_t *plan;
@@ -623,7 +722,9 @@ float G_BotTeamTargetBonus( gentity_t *ent, gentity_t *target )
   if( target->s.number == plan->threat && plan->defending[ id ] ) bonus += 650.0f;
   /* An assembled assault must shoot objectives instead of farming each fresh
    * defender forever. The combat selector still requires real visibility. */
-  if( plan->basePressure >= 2 && BotTeamWave( plan, id ) &&
+  if( ( plan->basePressure >= 2 ||
+        ( plan->hasEnemyBase && DistanceSquared( ent->r.currentOrigin, plan->objectivePoint ) < 650.0f * 650.0f ) ) &&
+      BotTeamWave( plan, id ) &&
       plan->releasedSpawn[ id ] == g_botStates[ id ].spawnCount && !plan->defending[ id ] &&
       BotTeamStructureAttack( ent, target ) )
   {

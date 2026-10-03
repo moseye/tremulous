@@ -92,6 +92,8 @@ void G_BotTeamMetrics( team_t team, int *waves, int *rallied, int *dispatches, i
 void G_BotTeamCohortMetrics( team_t team, int *launchedMembers, int *peakGroup,
                             int *advanceOrders, int *activeMembers );
 void G_BotTeamProgressMetrics( team_t team, int *renewals, int *recalls );
+/* Stable squad identity for route preferences; no enemy information. */
+int G_BotTeamRouteGroup( gentity_t *ent );
 
 void G_BotBenchmarkInit( void );
 void G_BotBenchmarkShutdown( void );

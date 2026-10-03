@@ -15,9 +15,21 @@ static qboolean benchActive;
 static qboolean benchPending;
 static int benchPendingHumans, benchPendingAliens, benchPendingSeconds;
 static int benchStart, benchWallStart, benchPrevious, benchDeadline, benchNextSample;
+static int benchLastSample, benchSampleInterval;
 static int benchSeed, benchFrames, benchMinStep, benchMaxStep;
 static char benchMap[ MAX_QPATH ];
 static botBenchTeam_t benchTeams[ NUM_TEAMS ];
+static unsigned int benchSpawnGeneration[ MAX_CLIENTS ];
+static vmCvar_t benchSampleMsec;
+
+/* Observation cadence only: server and Pmove ticks retain their normal timing.
+ * A generation changes only at the physical buildable-spawn hook below, so
+ * evolution and a reused entity slot are not mistaken for continuous motion. */
+static int BotBenchSampleInterval( void )
+{
+  trap_Cvar_Update( &benchSampleMsec );
+  return MAX( 250, MIN( 30000, benchSampleMsec.integer ) );
+}
 
 static botBenchTeam_t *BotBenchTeam( gentity_t *ent )
 {
@@ -143,7 +155,7 @@ static void BotBenchTeamJSON( team_t team, char *out, int size )
 static void BotBenchSnapshot( char *out, int size )
 {
   int i, count = 0, structures = 0;
-  char item[ 2048 ], navigation[ 768 ];
+  char item[ 2560 ], navigation[ 1024 ];
   gentity_t *ent;
   botState_t *bot;
   Q_strcat( out, size, ",\"snapshot\":{\"bots\":[" );
@@ -155,19 +167,24 @@ static void BotBenchSnapshot( char *out, int size )
     Com_sprintf( item, sizeof( item ),
       "%s{\"id\":%d,\"team\":%d,\"role\":%d,\"skill\":%d,\"health\":%d,"
       "\"spectator\":%d,\"class\":%d,\"weapon\":%d,\"credits\":%d,\"target\":%d,"
+      "\"physical_spawn_generation\":%u,\"velocity\":[%.1f,%.1f,%.1f],"
       "\"rallying\":%d,\"position\":[%.1f,%.1f,%.1f],"
       "\"move_goal\":[%.1f,%.1f,%.1f],\"move_goal_age_ms\":%d,"
-      "\"buttons\":%d,\"upmove\":%d,\"weapon_state\":%d,\"weapon_time\":%d,"
+      "\"buttons\":%d,\"forwardmove\":%d,\"rightmove\":%d,\"upmove\":%d,"
+      "\"weapon_state\":%d,\"weapon_time\":%d,"
       "\"charge\":%d,\"pm_flags\":%d,\"ground_entity\":%d,\"state\":%d,"
       "\"mins\":[%.1f,%.1f,%.1f],\"maxs\":[%.1f,%.1f,%.1f],"
       "\"grapple_point\":[%.1f,%.1f,%.1f],"
       "\"viewangles\":[%.1f,%.1f,%.1f],\"navigation\":%s}",
       count++ ? "," : "", i, bot->team, bot->role, bot->skill, ent->health,
       ent->client->sess.spectatorState, ent->client->ps.stats[ STAT_CLASS ],
-      ent->client->ps.weapon, ent->client->pers.credit, bot->target, bot->rallying,
+      ent->client->ps.weapon, ent->client->pers.credit, bot->target,
+      benchSpawnGeneration[ i ], ent->client->ps.velocity[ 0 ],
+      ent->client->ps.velocity[ 1 ], ent->client->ps.velocity[ 2 ], bot->rallying,
       ent->client->ps.origin[ 0 ], ent->client->ps.origin[ 1 ], ent->client->ps.origin[ 2 ],
       bot->moveGoal[ 0 ], bot->moveGoal[ 1 ], bot->moveGoal[ 2 ],
-      level.time - bot->moveGoalTime, bot->cmd.buttons, bot->cmd.upmove,
+      level.time - bot->moveGoalTime, bot->cmd.buttons,
+      bot->cmd.forwardmove, bot->cmd.rightmove, bot->cmd.upmove,
       ent->client->ps.weaponstate, ent->client->ps.weaponTime,
       ent->client->ps.stats[ STAT_MISC ], ent->client->ps.pm_flags,
       ent->client->ps.groundEntityNum, ent->client->ps.stats[ STAT_STATE ],
@@ -219,7 +236,7 @@ static void BotBenchRecord( const char *event, const char *winner, const char *r
   Com_sprintf( line, sizeof( line ),
     "{\"schema\":1,\"event\":\"%s\",\"map\":\"%s\",\"seed\":%d,"
     "\"elapsed_ms\":%d,\"wall_elapsed_ms\":%d,\"winner\":\"%s\",\"reason\":\"%s\","
-    "\"frames\":%d,\"min_step_ms\":%d,\"max_step_ms\":%d,"
+    "\"frames\":%d,\"min_step_ms\":%d,\"max_step_ms\":%d,\"sample_interval_ms\":%d,"
     "\"configuration\":{\"combat_tuning\":%d,\"teamwork\":%d,\"spawn_scale\":%d,"
     "\"nav_tuning\":%d,\"nav_node_limit\":%d},"
     "\"humans\":%s,\"aliens\":%s,"
@@ -234,7 +251,7 @@ static void BotBenchRecord( const char *event, const char *winner, const char *r
     "\"mover_rejected_attempts\":%d,\"mover_dropped\":%d}}\n",
     event, benchMap, benchSeed, level.time - benchStart,
     trap_Milliseconds( ) - benchWallStart, winner, reason,
-    benchFrames, benchMinStep, benchMaxStep,
+    benchFrames, benchMinStep, benchMaxStep, benchSampleInterval,
     g_botCombatTuning.integer, g_botTeamwork.integer, g_botSpawnScale.integer,
     trap_Cvar_VariableIntegerValue( "g_botNavTuning" ),
     trap_Cvar_VariableIntegerValue( "g_botNavNodes" ), humans, aliens,
@@ -257,6 +274,7 @@ void G_BotBenchmarkInit( void )
   benchActive = qfalse;
   benchPending = qfalse;
   trap_Cvar_Register( NULL, "g_botBenchmarkDetails", "0", 0 );
+  trap_Cvar_Register( &benchSampleMsec, "g_botBenchmarkSampleMsec", "30000", 0 );
   trap_AddCommand( "botbench" );
 }
 
@@ -290,11 +308,14 @@ static void BotBenchBegin( int humans, int aliens, int seconds )
   { G_Printf( "botbench: unable to create result file\n" ); return; }
   trap_FS_FCloseFile( file );
   memset( benchTeams, 0, sizeof( benchTeams ) );
+  memset( benchSpawnGeneration, 0, sizeof( benchSpawnGeneration ) );
   benchTeams[ TEAM_HUMANS ].firstSpawnBuild = -1;
   benchTeams[ TEAM_ALIENS ].firstSpawnBuild = -1;
   benchStart = benchPrevious = level.time;
   benchDeadline = level.time + seconds * 1000;
-  benchNextSample = level.time + 30000;
+  benchSampleInterval = BotBenchSampleInterval( );
+  benchLastSample = level.time;
+  benchNextSample = level.time + benchSampleInterval;
   benchFrames = benchMinStep = benchMaxStep = 0;
   benchSeed = trap_Cvar_VariableIntegerValue( "sv_simulationSeed" );
   trap_Cvar_VariableStringBuffer( "mapname", benchMap, sizeof( benchMap ) );
@@ -359,7 +380,7 @@ qboolean G_BotBenchmarkConsoleCommand( void )
 
 void G_BotBenchmarkFrame( void )
 {
-  int i, dt, queue;
+  int i, dt, queue, interval;
   botBenchTeam_t *stats;
   gentity_t *ent;
   if( benchPending )
@@ -369,6 +390,12 @@ void G_BotBenchmarkFrame( void )
     return;
   }
   if( !benchActive ) return;
+  interval = BotBenchSampleInterval( );
+  if( interval != benchSampleInterval )
+  {
+    benchSampleInterval = interval;
+    benchNextSample = benchLastSample + interval;
+  }
   dt = level.time - benchPrevious;
   benchPrevious = level.time;
   if( dt > 0 )
@@ -406,14 +433,20 @@ void G_BotBenchmarkFrame( void )
   else if( level.time >= benchNextSample )
   {
     BotBenchRecord( "sample", "running", "" );
-    benchNextSample += 30000;
+    benchLastSample = level.time;
+    benchNextSample = level.time + benchSampleInterval;
   }
 }
 
 void G_BotBenchmarkSpawn( gentity_t *ent )
 {
   botBenchTeam_t *stats = BotBenchTeam( ent );
-  if( stats ) stats->spawns++;
+  if( stats )
+  {
+    stats->spawns++;
+    if( ent->s.number >= 0 && ent->s.number < MAX_CLIENTS )
+      benchSpawnGeneration[ ent->s.number ]++;
+  }
 }
 
 void G_BotBenchmarkDeath( gentity_t *victim, gentity_t *attacker )

@@ -94,6 +94,15 @@ without supplying information to bots. Aggregate structure counts include all
 buildings; the optional structure-position list is capped at 128 and reports
 any omitted count.
 
+For physical movement diagnostics, add `--set g_botBenchmarkSampleMsec=500`
+with details enabled. The diagnostic interval defaults to 30,000 ms and is
+bounded to 250–30,000 ms; it changes observations, not game ticks. Detailed
+samples include physical spawn generation, velocity, movement commands, squad
+route preference and crowd yields. Compare movement only across continuous
+living samples from the same physical generation and class. Different route
+preferences alone do not prove different traversed corridors; use actual
+positions and crossing gates. Finer samples increase output and analysis cost.
+
 ## Interpret results
 
 A draw at the game-time limit is distinct from a process timeout. Timeouts,

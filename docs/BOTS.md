@@ -264,6 +264,22 @@ hazards matter to traversability. A* routes guide local, class-sized movement
 traces; short routes can operate before graph generation completes. Stuck
 recovery, jump attempts and wall-climbing escape behavior supplement routing.
 
+Tuned navigation follows stairs as a sequence of ordinary full-hull 18-unit
+steps. Local steering checks supported landings along a short lookahead instead
+of requiring one raised sweep across the whole staircase. Nearby teammates
+remain solid obstacles: bots try a supported side or back step, with brief
+right-of-way pauses, and do not blacklist a stair waypoint solely for a crowd.
+Wall walkers check movement in their current surface plane and can release an
+underside attachment when stalled above a verified nearby floor.
+
+Route costs include stable corridor preferences for each assault squad and
+bounded congestion penalties for other squads' upcoming paths. Preferences
+change with new squads, lives and stuck recovery, while each actual route still
+passes the class's collision checks. These costs encourage alternatives when
+the map offers them; a passage with only one legal exit still needs queuing.
+Waiting attackers can form a nearby group after 30 seconds or release a lone
+healthy survivor after 60 seconds, avoiding an indefinite fixed-rally wait.
+
 Graph generation is bounded: up to 8,192 floor nodes, 12 directed links per node,
 256 manual seeds and a generation trace budget per server frame. `botnav status`
 reports whether the graph is still growing. Graph nodes themselves are rebuilt
@@ -286,6 +302,7 @@ queries cannot continually consume the shared class-check budget.
 | Command | Effect |
 | --- | --- |
 | `botnav` or `botnav status` | Print nodes, links, progress, manual seeds and hurt-volume counts. |
+| `botnav check <class number> <from feet x y z> <to feet x y z>` | Read-only class connector diagnostic: 1 verified, 0 blocked, -1 deferred; coordinates describe feet rather than player origins. |
 | `botnav add <client number>` | Add a seed at an active player's feet. |
 | `botnav add <x> <y> <z>` | Add a seed using map coordinates. |
 | `botnav save` | Save current manual seeds to `botnav/<mapname>.nav`. |
