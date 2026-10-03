@@ -544,7 +544,9 @@ static qboolean BotTeamAttackGoal( gentity_t *ent, botState_t *bot, botTeamPlan_
   if( target >= 0 && !BotTeamFresh( actor ) )
   {
     other = &plan->actors[ target ];
-    VectorCopy( other->outnumbered && other->regroupUntil > level.time ? other->regroupPoint : other->combatPoint, goal );
+    if( other->outnumbered && other->regroupUntil > level.time )
+      VectorCopy( other->regroupPoint, goal );
+    else VectorCopy( other->combatPoint, goal );
     BotTeamOrder( plan, actor, BOT_ORDER_FIGHT, other->combatTarget ); return qtrue;
   }
   if( BotTeamSearching( ent, plan ) ) return BotTeamSearchGoal( ent, bot, plan, actor, goal );

@@ -104,6 +104,10 @@ def parse_seeds(text):
     return values
 
 
+class FixtureTelemetryError(ValueError):
+    """Controlled fixtures are not normal-rules match evidence."""
+
+
 class TelemetryReader:
     """Read complete JSONL records without interpreting an unfinished write."""
 
@@ -139,8 +143,15 @@ class TelemetryReader:
         if not isinstance(event, dict) or event.get("schema") != SCHEMA:
             raise ValueError("unsupported botbench telemetry schema")
         kind = event.get("event")
-        if kind not in ("start", "sample", "finish"):
+        if kind not in ("start", "sample", "taunt", "finish"):
             raise ValueError(f"unexpected telemetry event {kind!r}")
+        configuration = event.get("configuration", {})
+        if event.get("fixture_mode", 0) != 0 or (
+                isinstance(configuration, dict) and configuration.get("probe_enabled", 0) != 0):
+            raise FixtureTelemetryError("botprobe fixtures are excluded from normal-rules benchmarks")
+        if kind == "taunt" and (type(event.get("event_actor")) is not int
+                                or not 0 <= event["event_actor"] < 64):
+            raise ValueError("accepted taunt record requires its actual actor ID")
         elapsed = event.get("elapsed_ms")
         if type(elapsed) is not int or elapsed < 0:
             raise ValueError("elapsed_ms must be a nonnegative integer")
@@ -553,6 +564,10 @@ def run_match(job):
                     report["error"] = "server did not produce start telemetry before startup safety limit"
                     break
                 time.sleep(POLL_SECONDS)
+    except FixtureTelemetryError as error:
+        report["status"] = "invalid_fixture"
+        report["winner"] = report["reason"] = None
+        report["error"] = str(error)
     except Exception as error:
         report["error"] = f"{type(error).__name__}: {error}"
     finally:

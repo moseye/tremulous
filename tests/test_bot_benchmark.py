@@ -92,6 +92,30 @@ class TelemetryTests(unittest.TestCase):
         after["snapshot"]["bots"][0]["position"][0] += 1
         self.assertNotEqual(benchmark.telemetry_digest([before]), benchmark.telemetry_digest([after]))
 
+    def test_accepted_taunts_preserve_events_and_same_tick_observations(self):
+        reader = benchmark.TelemetryReader(pathlib.Path("unused"), 17)
+        reader.events.append(event())
+        accepted = event("taunt", 50)
+        accepted["event_actor"] = 17
+        accepted["aliens"]["taunts_accepted"] = 1
+        reader.validate(accepted)
+        reader.events.append(accepted)
+        reader.validate(event("sample", 50))
+        altered = copy.deepcopy(accepted)
+        altered["event_actor"] = 18
+        self.assertNotEqual(benchmark.telemetry_digest([accepted]), benchmark.telemetry_digest([altered]))
+        for actor in (-1, 64, None, "17"):
+            with self.assertRaises(ValueError):
+                reader.validate({**accepted, "event_actor": actor})
+
+    def test_probe_fixtures_are_rejected_but_legacy_telemetry_remains_readable(self):
+        reader = benchmark.TelemetryReader(pathlib.Path("unused"), 17)
+        reader.validate(event())
+        reader.validate({**event(), "configuration": {"probe_enabled": 0}, "fixture_mode": 0})
+        for fields in ({"configuration": {"probe_enabled": 1}}, {"fixture_mode": 1}):
+            with self.assertRaises(benchmark.FixtureTelemetryError):
+                reader.validate({**event(), **fields})
+
     def test_server_error_terminal_is_recognized_without_becoming_a_game_outcome(self):
         reader = benchmark.TelemetryReader(pathlib.Path("unused"), 17)
         reader.events.append(event())
