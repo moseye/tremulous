@@ -142,6 +142,12 @@ The selected aim settings reduce human combat advantage, but the bots still
 apply weak pressure to human bases and matches can stalemate. Nexus6 can strand
 aliens near upper spawn platforms. The bot behavior remains experimental.
 
+The bundled legacy media lacks some weapon `animation.cfg` files. The client
+logs parse errors and uses static animation fallback; the tested world and
+construction kit still render. On the test computer, unavailable OpenAL fell
+back to SDL audio. Complete weapon animation playback and audible sound were
+not validated.
+
 Base placement uses sampled positions and local choke-point traces, so cramped
 bases can produce awkward layouts. The global navigation graph covers floors;
 wall walking is local steering and recovery. Complex movers, teleporters and

@@ -59,14 +59,16 @@ def public_validation_summary(file, report):
     summary = {'schema': 1, 'kind': 'sanitized_bot_validation_summary', 'ok': True,
                'source_report_sha256': hashlib.sha256(file.read_bytes()).hexdigest(),
                'scope': 'Public semantic summary of a passed smoke/client report. '
-                        'The source report hash preserves traceability; this is not '
+                        'Results apply only to the recorded runtime hashes; older hashes '
+                        'do not validate this package. The source report hash preserves traceability; this is not '
                         'competitive balance certification or proof of source-to-binary equivalence.',
                'passed_check_count': len(report['checks']) if isinstance(report.get('checks'), list) else None}
     for name in ('economy', 'bell_skills', 'warmup_disabled', 'renderer_observed',
-                 'bell_skills_observed', 'package_files_unchanged'):
+                 'bell_skills_observed', 'package_files_unchanged', 'maturity_wall_time_met'):
         if type(report.get(name)) is bool:
             summary[name] = report[name]
-    for name in ('vm', 'bots_per_team', 'duration_seconds', 'construction_events', 'kill_events', 'exit_code'):
+    for name in ('vm', 'bots_per_team', 'duration_seconds', 'construction_events', 'kill_events',
+                 'exit_code', 'mature_seconds_requested', 'wall_seconds', 'asset_warning_count'):
         value = report.get(name)
         if type(value) in (int, float) and math.isfinite(value):
             summary[name] = value
@@ -133,6 +135,38 @@ def public_validation_summary(file, report):
             summary['build_hashes'].append({'name': name, 'bytes': size, 'sha256': digest.lower()})
     if isinstance(report.get('screenshots'), list):
         summary['screenshot_count'] = len(report['screenshots'])
+    gameplay = report.get('observed_gameplay', {})
+    if isinstance(gameplay, dict):
+        summary['observed_gameplay'] = {name: gameplay[name] for name in ('construction_events', 'kill_events')
+                                       if type(gameplay.get(name)) is int and gameplay[name] >= 0}
+    if (type(report.get('asset_warning_count')) is int and report['asset_warning_count'] > 0 and
+            isinstance(report.get('asset_warning_qualification'), str)):
+        summary['asset_qualification'] = ('Stock weapon animation.cfg files are absent. '
+                                         'Registration continues with static animation fallback; '
+                                         'complete weapon animation playback was not validated.')
+    audio = report.get('audio_qualification')
+    if isinstance(audio, dict):
+        summary['audio_qualification'] = {name: audio[name] for name in
+                                         ('openal_library_failure_observed', 'sdl_audio_initialized_observed',
+                                          'audio_disabled_verified') if type(audio.get(name)) is bool}
+        summary['audio_qualification']['audibility_validated'] = False
+    visual = report.get('visual_verification')
+    if isinstance(visual, dict):
+        summary['visual_verification'] = {name: visual[name] for name in
+                                          ('world_and_buildings_rendered',
+                                           'fatal_error_or_missing_media_screen_observed')
+                                          if type(visual.get(name)) is bool}
+        for name in ('follow_match_clock_seconds', 'free_flight_match_clock_seconds'):
+            if type(visual.get(name)) is int and visual[name] >= 0:
+                summary['visual_verification'][name] = visual[name]
+        summary['visual_verification']['follow_view_observed'] = bool(
+            re.fullmatch(r'following Bot-[HA]-\d+', str(visual.get('follow_text_observed', ''))))
+        summary['visual_verification']['free_flight_mode_observed'] = (
+            visual.get('free_flight_prompt_observed') == 'Press ENTER or MOUSE3 to follow a player')
+        if 'partly occluded' in str(visual.get('qualification', '')):
+            summary['visual_verification']['qualification'] = (
+                'Free-flight mode was visible, with the camera partly occluded by a nearby bot. '
+                'Manual camera movement was not exercised.')
     return summary
 
 
@@ -203,15 +237,30 @@ def preflight(source, build, data, output, vc_runtime, reports):
     sdl_notice = sdl_headers[0].read_text(encoding='utf-8').split('*/', 1)[0] + '*/\n'
     checked_reports = []
     report_names = set()
+    runtime_files = {file.name: file for file in qvms + [build / name for name in RUNTIME_FILES] +
+                     [build / 'base' / name for name in NATIVE_MODULES]}
+    runtime_hashes = {name: hashlib.sha256(file.read_bytes()).hexdigest()
+                      for name, file in runtime_files.items()}
     for file in reports:
         report = json.loads(file.read_text(encoding='utf-8'))
         if report.get('ok') is not True:
             raise ValueError(f'cannot package a failed validation report: {file}')
         name = report_destination(report)
+        summary = public_validation_summary(file, report)
+        recorded = {item['name']: item['sha256'] for item in summary['build_hashes']}
+        required_core = (('tremded.exe', 'game.dll' if report['vm'] == 0 else 'game.qvm')
+                         if 'vm' in report else ('tremulous.exe', 'game.qvm'))
+        matches = (all(recorded[item] == runtime_hashes[item] for item in required_core)
+                   if all(item in recorded for item in required_core) else None)
+        summary['tested_core_runtime_matches_package'] = matches
+        if matches is False:
+            name = 'historical-' + name
+        elif matches is None:
+            name = 'unscoped-' + name
         if name in report_names:
             raise ValueError(f'duplicate packaged validation report name: {name}')
         report_names.add(name)
-        checked_reports.append((name, public_validation_summary(file, report)))
+        checked_reports.append((name, summary))
     manifest = json.loads((data / 'upstream-manifest.json').read_text(encoding='utf-8-sig'))
     media = sorted(data.glob('*.pk3'))
     if len(media) != 10:
